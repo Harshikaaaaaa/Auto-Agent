@@ -105,6 +105,7 @@ export function setupGoogleRoutes(app, { fetchImpl = fetch } = {}) {
 
     const spec = operation.request(params.data);
 
+    const startedAt = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), env.GOOGLE_API_TIMEOUT_MS);
 
@@ -123,7 +124,15 @@ export function setupGoogleRoutes(app, { fetchImpl = fetch } = {}) {
     } catch (err) {
       clearTimeout(timer);
       const aborted = err?.name === 'AbortError';
-      logger.warn({ err, operation: parsed.data.operation }, 'google api call failed');
+      logger.warn(
+        {
+          reqId: req.id,
+          operation: parsed.data.operation,
+          durationMs: Date.now() - startedAt,
+          outcome: aborted ? 'timeout' : 'unreachable',
+        },
+        'google api call failed',
+      );
       return res.status(aborted ? 504 : 502).json({
         error: aborted ? 'google_timeout' : 'google_unreachable',
         message: aborted
@@ -140,11 +149,30 @@ export function setupGoogleRoutes(app, { fetchImpl = fetch } = {}) {
     if (!response.ok) {
       const failure = upstreamFailure(response.status, bodyText);
       logger.warn(
-        { operation: parsed.data.operation, status: response.status },
+        {
+          reqId: req.id,
+          operation: parsed.data.operation,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          outcome: 'upstream_error',
+        },
         'google api returned an error',
       );
       return res.status(failure.status).json({ error: failure.error, message: failure.message });
     }
+
+    // A successful proxied call spends the operator's Google quota and can send
+    // mail, so it gets an info-level trace (no response body — that is user data).
+    logger.info(
+      {
+        reqId: req.id,
+        operation: parsed.data.operation,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        outcome: 'ok',
+      },
+      'google api call',
+    );
 
     if (isText) {
       return res.json({ result: operation.parse(bodyText) });

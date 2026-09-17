@@ -45,6 +45,8 @@ beforeAll(async () => {
   const limiters = security.buildLimiters();
   const app = express();
   app.set('trust proxy', 1);
+  // Request logger first, as in production, so the correlation-id header is set.
+  app.use(security.buildRequestLogger());
   app.use(security.buildHelmet());
   app.use(security.buildCors());
   app.use(cookieParser());
@@ -332,6 +334,31 @@ describe('security headers', () => {
   it('does not advertise the server implementation', async () => {
     const { headers } = await req('/healthz');
     expect(headers.get('x-powered-by')).toBeNull();
+  });
+
+  it('assigns a correlation id and echoes it on the response', async () => {
+    const { headers } = await req('/healthz');
+    const id = headers.get('x-request-id');
+    expect(id).toBeTruthy();
+    // A generated id is a uuid.
+    expect(id).toMatch(/^[0-9a-f-]{16,}$/);
+  });
+
+  it('honours a sane inbound X-Request-Id but rejects a hostile one', async () => {
+    const good = await realFetch(`${baseUrl}/healthz`, {
+      headers: { 'X-Request-Id': 'trace-abc.123_XYZ' },
+    });
+    expect(good.headers.get('x-request-id')).toBe('trace-abc.123_XYZ');
+
+    // A value with characters outside the strict charset (here spaces and a
+    // semicolon — the makings of log injection) is replaced with a fresh id.
+    const hostile = 'id with spaces; drop';
+    const bad = await realFetch(`${baseUrl}/healthz`, {
+      headers: { 'X-Request-Id': hostile },
+    });
+    const replaced = bad.headers.get('x-request-id');
+    expect(replaced).not.toBe(hostile);
+    expect(replaced).toMatch(/^[0-9a-f-]{16,}$/);
   });
 });
 

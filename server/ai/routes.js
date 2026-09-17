@@ -177,6 +177,49 @@ function validationFailure(res, error) {
 }
 
 /**
+ * Time and log a provider call.
+ *
+ * These are the app's most expensive and most failure-prone operations, so each
+ * one gets a structured log line: which route, provider, and model; how long it
+ * took; how many attempts; and whether it succeeded — correlated by the request
+ * id. Deliberately logs NO prompt and NO completion text: those can carry user
+ * data or model output, and the point is an operational trace, not a transcript.
+ */
+async function observeAiCall(req, kind, args) {
+  const startedAt = Date.now();
+  try {
+    const result = await callProviderForJson(args);
+    logger.info(
+      {
+        reqId: req.id,
+        aiCall: kind,
+        provider: result.provider,
+        model: result.model,
+        attempts: result.attempts,
+        durationMs: Date.now() - startedAt,
+        outcome: 'ok',
+      },
+      'ai provider call',
+    );
+    return result;
+  } catch (err) {
+    logger.warn(
+      {
+        reqId: req.id,
+        aiCall: kind,
+        provider: err?.provider ?? args.provider ?? 'default',
+        durationMs: Date.now() - startedAt,
+        status: err?.status,
+        retryable: err?.retryable,
+        outcome: 'error',
+      },
+      'ai provider call failed',
+    );
+    throw err;
+  }
+}
+
+/**
  * Wrap an async route so provider errors become clean HTTP responses and
  * unexpected errors never leak internals (a stack could contain a key).
  */
@@ -226,7 +269,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { prompt, catalog, hints, provider, model, repairFeedback } = parsed.data;
-      const result = await callProviderForJson({
+      const result = await observeAiCall(req, 'plan', {
         prompt: buildPlanPrompt({ prompt, catalog, hints, repairFeedback }),
         provider,
         model,
@@ -246,7 +289,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { message, graph, catalog, provider, model, repairFeedback } = parsed.data;
-      const result = await callProviderForJson({
+      const result = await observeAiCall(req, 'patch', {
         prompt: buildPatchPrompt({ message, graph, catalog, repairFeedback }),
         provider,
         model,
@@ -267,7 +310,7 @@ export function setupAiRoutes(app) {
 
       const { nodeLabel, nodeDescription, inputState, outputKeys, context, provider, model } =
         parsed.data;
-      const result = await callProviderForJson({
+      const result = await observeAiCall(req, 'node', {
         prompt: buildNodeExecutionPrompt({
           nodeLabel,
           nodeDescription,
@@ -293,7 +336,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { toolName, toolDescription, requiredActions, provider, model } = parsed.data;
-      const result = await callProviderForJson({
+      const result = await observeAiCall(req, 'connector', {
         prompt: buildConnectorPrompt({ toolName, toolDescription, requiredActions }),
         provider,
         model,

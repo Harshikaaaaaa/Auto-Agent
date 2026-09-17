@@ -81,6 +81,44 @@ const MIGRATIONS = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
     ],
   },
+  {
+    id: '004_create_workflow_runs',
+    statements: [
+      // One row per execution. Run history used to live as a 20-entry JSON array
+      // nested in workflows.metadata — write-only (nothing read it) and lossy
+      // (only status/provider/timestamp). It moves here so a run is a first-class
+      // record the operator can list and inspect: how long it took, how many
+      // nodes ran, how many failed, and why.
+      //
+      // The FK is ON DELETE CASCADE so deleting a workflow drops its run history,
+      // and `owner_id` is denormalised onto the row so runs can be listed and
+      // access-checked without a join. `workflow_name` is captured at run time so
+      // a renamed or deleted-and-recreated workflow's old runs still read sensibly.
+      `CREATE TABLE IF NOT EXISTS workflow_runs (
+         id             CHAR(36)     NOT NULL,
+         workflow_id    CHAR(36)     NOT NULL,
+         owner_id       VARCHAR(64)  NOT NULL,
+         workflow_name  VARCHAR(255) NOT NULL,
+         status         VARCHAR(20)  NOT NULL,
+         provider       VARCHAR(120) NULL,
+         model          VARCHAR(120) NULL,
+         duration_ms    INT UNSIGNED NULL,
+         node_count     INT UNSIGNED NULL,
+         failure_count  INT UNSIGNED NULL,
+         failure_kind   VARCHAR(40)  NULL,
+         error          VARCHAR(500) NULL,
+         started_at     DATETIME(3)  NULL,
+         finished_at    DATETIME(3)  NULL,
+         created_at     DATETIME(3)  NOT NULL,
+         PRIMARY KEY (id),
+         KEY idx_workflow_runs_workflow (workflow_id, created_at),
+         KEY idx_workflow_runs_owner (owner_id, created_at),
+         CONSTRAINT fk_workflow_runs_workflow
+           FOREIGN KEY (workflow_id) REFERENCES workflows (id)
+           ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
 ];
 
 /** Ensure the bookkeeping table exists before anything else. */

@@ -40,6 +40,12 @@ function buildPool({ database = env.DB_NAME } = {}) {
     // Dates come back as strings; the app treats timestamps as ISO strings and
     // converting here would produce local-time surprises.
     dateStrings: true,
+    // Interpret DATETIME columns as UTC in both directions. Without this, mysql2
+    // converts an outbound JS Date to the server's local timezone and reads it
+    // back as a naive string the app then labels 'Z' — so a stored instant comes
+    // back shifted by the server's offset. Pinning to UTC keeps a round-tripped
+    // timestamp faithful.
+    timezone: 'Z',
     // Guards against a query hanging a request indefinitely.
     connectTimeout: 10_000,
     ...(env.DB_SSL ? { ssl: { minVersion: 'TLSv1.2' } } : {}),

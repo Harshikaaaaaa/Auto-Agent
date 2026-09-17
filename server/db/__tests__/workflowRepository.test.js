@@ -210,38 +210,8 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
     });
   });
 
-  describe('run records', () => {
-    it('accumulates run history and counts', async () => {
-      await repository.createWorkflow(OWNER, sampleInput('Runs'));
-
-      await repository.recordRun(OWNER, 'Runs', { status: 'completed', provider: 'openrouter' });
-      const second = await repository.recordRun(OWNER, 'Runs', {
-        status: 'failed',
-        provider: 'gemini',
-      });
-
-      expect(second.runCount).toBe(2);
-      expect(second.lastExecutionStatus).toBe('failed');
-      expect(second.runHistory).toHaveLength(2);
-      expect(second.runHistory[1].provider).toBe('gemini');
-    });
-
-    it('bounds run history so metadata cannot grow without limit', async () => {
-      await repository.createWorkflow(OWNER, sampleInput('Busy'));
-
-      for (let i = 0; i < 25; i += 1) {
-        await repository.recordRun(OWNER, 'Busy', { status: 'completed' });
-      }
-
-      const final = await repository.recordRun(OWNER, 'Busy', { status: 'completed' });
-      expect(final.runHistory).toHaveLength(20);
-      expect(final.runCount).toBe(26);
-    });
-
-    it('returns null for an unknown workflow', async () => {
-      expect(await repository.recordRun(OWNER, 'Nope', { status: 'completed' })).toBeNull();
-    });
-  });
+  // Run recording moved to server/db/runRepository.js in Task 16; its tests
+  // live in runRepository.test.js.
 
   describe('migrations', () => {
     it('is idempotent when run again', async () => {

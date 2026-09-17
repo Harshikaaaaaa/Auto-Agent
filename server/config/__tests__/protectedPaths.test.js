@@ -81,6 +81,9 @@ describe('protected paths', () => {
     // The OAuth callback WRITES a credential, so it must be covered too.
     expect(registered.has('/api/oauth/google/callback')).toBe(true);
     expect(registered.has('/api/google/call')).toBe(true);
+    // Run-history read surface added in Task 16.
+    expect(registered.has('/api/workflows/runs')).toBe(true);
+    expect(registered.has('/api/workflows/:id/runs')).toBe(true);
     expect(registered.size).toBeGreaterThan(8);
 
     const unguarded = [...registered].filter((route) => {

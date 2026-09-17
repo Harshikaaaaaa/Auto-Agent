@@ -31,65 +31,77 @@ This means the app is already structurally close to a real workflow-builder prod
 The product should include the key user experience patterns that make a BuildMyAgent-style AI builder feel powerful and usable:
 
 ### 1. Natural-language workflow creation
+
 - user enters a goal in plain English such as "Create a lead qualification workflow with Gmail, Sheets, and Slack"
 - the system extracts the objective, trigger, required actions, and data flow
 - the workflow is converted into a structured graph instead of a vague agent instruction
 
 ### 2. Smart requirement parsing
+
 - identify triggers, data sources, outputs, conditions, and external tools
 - detect whether the user needs email, spreadsheet, CRM, messaging, file, or retrieval actions
 - classify workflows by use case such as support, sales, research, operations, reporting, onboarding, or content generation
 
 ### 3. Prompt-to-plan generation
+
 - generate a workflow plan before execution
 - present the plan as a preview with editable steps
 - let the user approve, modify, or regenerate the plan
 - convert the approved plan into actual canvas nodes automatically
 
 ### 4. Automatic tool discovery and node selection
+
 - detect required capabilities from the prompt
 - match them to built-in reusable nodes and connectors
 - recommend or auto-import relevant reusable tools instead of creating duplicate custom nodes
 - avoid reinventing basic actions when standard workflow blocks already exist
 
 ### 5. Reusable workflow blocks and agent-like capabilities
+
 - predefine common blocks such as summarize, classify, route, extract data, send email, append row, create document, notify Slack, and update sheets
 - allow these blocks to be reused across workflows
 - give users the ability to create custom blocks from successful flows
 
 ### 6. Prompt-based editing and refinement
+
 - after generation, the user can ask for changes such as "add approval step", "use Gmail instead of Slack", or "send summary to a Google Sheet"
 - the planner updates the graph without needing manual node rebuilding
 - revisions remain grounded in the existing workflow state
 
 ### 7. Multi-step workflow assembly from a single request
+
 - the user can describe an end-to-end task in one prompt
 - the system expands it into a complete chain of steps
 - each step maps to a proper workflow node or reusable component
 - the system keeps the chain explainable and editable
 
 ### 8. Tool and connector onboarding inside the flow
+
 - when a workflow requires Gmail, Sheets, Drive, Slack, or WhatsApp, the system checks auth status
 - if disconnected, it prompts the user to reconnect before running
 - once enabled, the tool becomes reusable in future workflows
 
 ### 9. Workflow templates and saved patterns
+
 - save completed prompt-generated flows as reusable templates
 - support versioning and duplication of successful scenarios
 - turn common patterns into standard workflow recipes
 
 ### 10. AI-assisted flow review and guardrails
+
 - show generated workflow summary before execution
 - highlight required connectors, data dependencies, and decision points
 - allow user to approve or reject generated steps
 - reduce risk of random autonomous behavior
 
 ### 11. Human-in-the-loop review model
+
 - critical workflows can pause for review before sending an email, posting a message, or updating data
 - approvals can be inserted as workflow nodes
 - users keep control over actions that affect external systems
 
 ### 12. Prompt-to-production workflow lifecycle
+
 - prompt creates workflow
 - planner builds graph
 - user adjusts and approves
@@ -158,6 +170,7 @@ These approaches make the system unpredictable and hard to trust.
 ## Recommended architecture
 
 ### 1. Planner layer
+
 Transforms user input into a structured workflow plan.
 
 Output includes:
@@ -172,6 +185,7 @@ Output includes:
 - conditional branches
 
 ### 2. Capability router
+
 Matches workflow needs to available tool capabilities.
 
 Each tool/capability should have metadata like:
@@ -186,6 +200,7 @@ Each tool/capability should have metadata like:
 - fallback options
 
 ### 3. Reusable node registry
+
 Stores all built-in workflow blocks.
 
 Examples:
@@ -203,6 +218,7 @@ Examples:
 - Memory step
 
 ### 4. Workflow graph runtime
+
 Executes nodes in a deterministic graph.
 
 This layer handles:
@@ -215,6 +231,7 @@ This layer handles:
 - tool invocation and error handling
 
 ### 5. Mature LangGraph-style runtime features
+
 This is the production-grade execution layer required for a reliable orchestration platform.
 
 The runtime should support:
@@ -232,6 +249,7 @@ The runtime should support:
 This is where the product moves beyond basic node execution into a production-ready workflow engine. It should provide the same reliability expectations seen in advanced orchestration frameworks, without becoming free-form autonomous behavior.
 
 ### 6. Observability and recovery layer
+
 Ensures the product is stable in real use.
 
 Includes:
@@ -283,6 +301,7 @@ This keeps the system explainable and predictable.
 ## Recommended milestone plan
 
 ### Phase 1: Stabilize the workflow builder
+
 - finalize trigger-first blank flow
 - standardize node categories
 - improve reusable node selection
@@ -290,18 +309,21 @@ This keeps the system explainable and predictable.
 - keep auth and execution failures visible
 
 ### Phase 2: Strengthen planning and generation
+
 - prompt-to-plan preview flow
 - structured workflow schema generation
 - prefer built-in reusable nodes before custom ones
 - create graph from approved plan
 
 ### Phase 3: Add capability routing
+
 - metadata for tools and capabilities
 - prompt-to-capability matching
 - preferred tool selection
 - fallback logic and performance-based routing
 
 ### Phase 4: Add AI workflow components
+
 - MCP-based tool nodes
 - retrieval / RAG nodes
 - memory nodes
@@ -309,6 +331,7 @@ This keeps the system explainable and predictable.
 - format and summary outputs
 
 ### Phase 5: Make it production-grade
+
 - workflow validation before run
 - retry logic and failure recovery
 - execution history and observability

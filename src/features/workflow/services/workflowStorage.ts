@@ -284,25 +284,80 @@ export async function deleteWorkflow(name: string): Promise<void> {
   await deleteWorkflowById(existing.id);
 }
 
+/** The status of a recorded run. Mirrors the server enum. */
+export type RunStatus = 'completed' | 'failed' | 'running' | 'cancelled';
+
+/** One persisted run, as returned by the run-history API. */
+export interface WorkflowRun {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  status: RunStatus;
+  provider: string | null;
+  model: string | null;
+  durationMs: number | null;
+  nodeCount: number | null;
+  failureCount: number | null;
+  failureKind: string | null;
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string | null;
+}
+
+/** The observability detail a caller may attach to a recorded run. */
+export interface RunOutcome {
+  status: RunStatus;
+  provider?: string;
+  model?: string;
+  durationMs?: number;
+  nodeCount?: number;
+  failureCount?: number;
+  failureKind?: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
 /**
  * Record the outcome of a run against a saved workflow.
  *
  * Best effort: a run already happened, so failing to annotate it must not surface
- * as an error to the user.
+ * as an error to the user. Sends whatever observability detail the caller has —
+ * duration, node/failure counts, the failure reason — all optional so the server
+ * accepts a bare {name, status} too.
  */
-export async function recordWorkflowRun(
-  name: string,
-  provider?: string,
-  status: 'completed' | 'failed' | 'running' = 'completed',
-): Promise<void> {
+export async function recordWorkflowRun(name: string, outcome: RunOutcome): Promise<void> {
   try {
+    // Trim an over-long error before it hits the wire; the server also caps it.
+    const body = { name, ...outcome, error: outcome.error?.slice(0, 500) };
     await fetch(apiUrl('/api/workflows/runs'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ name, status, provider }),
+      body: JSON.stringify(body),
     });
   } catch (error) {
     console.warn('[WorkflowStorage] Could not record the run outcome.', error);
+  }
+}
+
+/**
+ * Fetch run history. With no id, the caller's most recent runs across all
+ * workflows; with an id, that workflow's runs. Best effort: returns [] on any
+ * failure so a history panel degrades to empty rather than throwing.
+ */
+export async function listWorkflowRuns(workflowId?: string, limit = 25): Promise<WorkflowRun[]> {
+  const path = workflowId
+    ? `/api/workflows/${encodeURIComponent(workflowId)}/runs?limit=${limit}`
+    : `/api/workflows/runs?limit=${limit}`;
+  try {
+    const res = await fetch(apiUrl(path), { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.runs) ? (data.runs as WorkflowRun[]) : [];
+  } catch (error) {
+    console.warn('[WorkflowStorage] Could not load run history.', error);
+    return [];
   }
 }

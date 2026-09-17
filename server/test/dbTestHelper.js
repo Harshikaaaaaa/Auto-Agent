@@ -67,11 +67,12 @@ export async function loadDbModules(vi, overrides = {}) {
   const migrations = await import('../db/migrations.js');
   const repository = await import('../db/workflowRepository.js');
   const credentials = await import('../db/credentialRepository.js');
+  const runs = await import('../db/runRepository.js');
 
   await pool.ensureDatabaseExists();
   await migrations.runMigrations();
 
-  return { pool, migrations, repository, credentials };
+  return { pool, migrations, repository, credentials, runs };
 }
 
 /**
@@ -79,8 +80,10 @@ export async function loadDbModules(vi, overrides = {}) {
  * Deleting owners cascades to workflows, so ordering is handled by the schema.
  */
 export async function truncateAll(pool) {
-  // tool_credentials also cascades from owners, but is deleted explicitly so the
-  // helper does not depend on migration 003 having run in a given suite.
+  // workflow_runs and tool_credentials both cascade from owners, but are deleted
+  // explicitly (before workflows/owners) so the helper does not depend on
+  // migrations 003/004 having run in a given suite.
+  await pool.getPool().query('DELETE FROM workflow_runs');
   await pool.getPool().query('DELETE FROM tool_credentials');
   await pool.getPool().query('DELETE FROM workflows');
   await pool.getPool().query('DELETE FROM owners');

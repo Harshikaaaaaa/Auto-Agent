@@ -281,42 +281,6 @@ export async function deleteWorkflowByName(ownerId, name) {
   return result.affectedRows > 0;
 }
 
-/**
- * Append a run record to a workflow's metadata.
- *
- * Read-modify-write of one JSON column inside a transaction with the row locked,
- * so two runs finishing at once cannot drop each other's entry.
- */
-export async function recordRun(ownerId, name, { status, provider }) {
-  return withTransaction(async (connection) => {
-    const [rows] = await connection.query(
-      'SELECT metadata, version FROM workflows WHERE owner_id = ? AND name = ? FOR UPDATE',
-      [ownerId, name],
-    );
-    if (rows.length === 0) return null;
-
-    const metadata = parseJsonColumn(rows[0].metadata, {}) ?? {};
-    const history = Array.isArray(metadata.runHistory) ? metadata.runHistory : [];
-
-    const nextMetadata = {
-      ...metadata,
-      provider: provider ?? metadata.provider ?? 'unknown',
-      lastExecutionStatus: status,
-      lastRunAt: new Date().toISOString(),
-      runCount: Number(metadata.runCount ?? 0) + 1,
-      // Bounded so metadata cannot grow without limit. Task 16 moves full run
-      // history into its own table.
-      runHistory: [
-        ...history,
-        { status, provider: provider ?? 'unknown', timestamp: new Date().toISOString() },
-      ].slice(-20),
-    };
-
-    await connection.query(
-      'UPDATE workflows SET metadata = ?, updated_at = ? WHERE owner_id = ? AND name = ?',
-      [JSON.stringify(nextMetadata), new Date(), ownerId, name],
-    );
-
-    return nextMetadata;
-  });
-}
+// Run history moved to its own table and repository in Task 16. The old
+// `recordRun` here appended a bounded 20-entry JSON array to workflows.metadata;
+// runs are now first-class rows in `workflow_runs` — see server/db/runRepository.js.

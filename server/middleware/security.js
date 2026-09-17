@@ -100,11 +100,25 @@ export function buildHelmet() {
   });
 }
 
-/** Request logging with credentials redacted. */
+/** A safe request-correlation id: accept an inbound one only if it looks sane. */
+const REQUEST_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+
+/** Request logging with credentials redacted, and a correlation id per request. */
 export function buildRequestLogger() {
   return pinoHttp({
     logger,
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
+    // Correlate every log line for a request, and echo the id back on the
+    // response so a client (or a load balancer) can quote it in a bug report.
+    // An inbound X-Request-Id is honoured only when it matches a strict charset,
+    // so a caller cannot smuggle log-injection or unbounded strings into ours.
+    genReqId(req, res) {
+      const inbound = req.headers['x-request-id'];
+      const id =
+        typeof inbound === 'string' && REQUEST_ID_RE.test(inbound) ? inbound : crypto.randomUUID();
+      res.setHeader('X-Request-Id', id);
+      return id;
+    },
     // Health checks are frequent and uninteresting; keep them out of the logs.
     autoLogging: {
       ignore: (req) => req.url === '/healthz' || req.url === '/readyz',

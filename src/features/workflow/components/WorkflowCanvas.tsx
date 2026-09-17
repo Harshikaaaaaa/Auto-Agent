@@ -31,6 +31,7 @@ import {
   Undo2,
   Redo2,
   CheckCircle2,
+  History,
 } from 'lucide-react';
 import {
   generateWorkflowPlan,
@@ -63,6 +64,7 @@ import {
 import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
+import { RunHistoryPanel } from './RunHistoryPanel';
 import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
@@ -207,7 +209,9 @@ export function WorkflowCanvas() {
     nodeLabel: string;
     message: string;
   } | null>(null);
-  const [activeView, setActiveView] = useState<'graph' | 'execution'>('graph');
+  const [activeView, setActiveView] = useState<'graph' | 'execution' | 'history'>('graph');
+  // Bumped after a run is recorded so an open history panel refetches.
+  const [runHistoryReloadKey, setRunHistoryReloadKey] = useState(0);
   const reusableToolNodes = useMemo<ReusableNodeTemplate[]>(
     () =>
       getAllTools().flatMap((tool) =>
@@ -1394,6 +1398,11 @@ export function WorkflowCanvas() {
       return;
     }
 
+    // Observability: time the run and capture its shape so the outcome recorded
+    // in run history carries a duration and node count, not just a status.
+    const runStartedAt = new Date();
+    const runNodeCount = nodes.length;
+
     const validation = validateWorkflowForExecution();
     if (!validation.valid) {
       alert(validation.message);
@@ -1469,7 +1478,17 @@ export function WorkflowCanvas() {
       }
       if (activeWorkflowName) {
         const { recordWorkflowRun } = await import('@features/workflow/services/workflowStorage');
-        await recordWorkflowRun(activeWorkflowName, effectiveModel, 'completed');
+        const finishedAt = new Date();
+        await recordWorkflowRun(activeWorkflowName, {
+          status: 'completed',
+          model: effectiveModel,
+          provider: effectiveModel,
+          nodeCount: runNodeCount,
+          durationMs: finishedAt.getTime() - runStartedAt.getTime(),
+          startedAt: runStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+        });
+        setRunHistoryReloadKey((k) => k + 1);
       }
     } catch (err) {
       const errorText = String(err || 'Workflow execution failed');
@@ -1506,14 +1525,37 @@ export function WorkflowCanvas() {
         setIsTesting(false);
         if (activeWorkflowName) {
           const { recordWorkflowRun } = await import('@features/workflow/services/workflowStorage');
-          await recordWorkflowRun(activeWorkflowName, effectiveModel, 'failed');
+          const finishedAt = new Date();
+          await recordWorkflowRun(activeWorkflowName, {
+            status: 'failed',
+            failureKind: 'auth',
+            error: errorText,
+            model: effectiveModel,
+            provider: effectiveModel,
+            nodeCount: runNodeCount,
+            durationMs: finishedAt.getTime() - runStartedAt.getTime(),
+            startedAt: runStartedAt.toISOString(),
+            finishedAt: finishedAt.toISOString(),
+          });
+          setRunHistoryReloadKey((k) => k + 1);
         }
         return;
       }
 
       if (activeWorkflowName) {
         const { recordWorkflowRun } = await import('@features/workflow/services/workflowStorage');
-        await recordWorkflowRun(activeWorkflowName, effectiveModel, 'failed');
+        const finishedAt = new Date();
+        await recordWorkflowRun(activeWorkflowName, {
+          status: 'failed',
+          error: errorText,
+          model: effectiveModel,
+          provider: effectiveModel,
+          nodeCount: runNodeCount,
+          durationMs: finishedAt.getTime() - runStartedAt.getTime(),
+          startedAt: runStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+        });
+        setRunHistoryReloadKey((k) => k + 1);
       }
       alert(`Workflow execution failed:\n${errorText}`);
       setIsTesting(false);
@@ -1731,6 +1773,17 @@ export function WorkflowCanvas() {
             >
               <TerminalIcon className="w-4 h-4" />
               <span className="text-xs font-semibold">Execution Hub</span>
+            </button>
+            <button
+              onClick={() => setActiveView(activeView === 'history' ? 'graph' : 'history')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+                activeView === 'history'
+                  ? 'bg-white/5 text-white'
+                  : 'text-white/40 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              <span className="text-xs font-semibold">Run History</span>
             </button>
 
             <div className="pt-2 border-t border-white/5 mt-2">
@@ -2365,6 +2418,18 @@ export function WorkflowCanvas() {
                   setActiveView('graph');
                 }}
                 onDownload={downloadOutput}
+              />
+            </Panel>
+
+            {/* RUN HISTORY */}
+            <Panel
+              position="bottom-right"
+              className={`mr-6 mb-6 transition-all duration-500 transform ${activeView === 'history' ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0 pointer-events-none'}`}
+            >
+              <RunHistoryPanel
+                isVisible={activeView === 'history'}
+                reloadKey={runHistoryReloadKey}
+                onClose={() => setActiveView('graph')}
               />
             </Panel>
 

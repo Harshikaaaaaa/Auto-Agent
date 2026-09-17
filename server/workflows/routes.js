@@ -7,10 +7,10 @@ import {
   deleteWorkflowById,
   getWorkflowById,
   listWorkflows,
-  recordRun,
   updateWorkflow,
   upsertWorkflowByName,
 } from '../db/workflowRepository.js';
+import { listRuns, recordRun } from '../db/runRepository.js';
 
 /**
  * Saved-workflow API, backed by MySQL.
@@ -48,8 +48,17 @@ const patchBodySchema = workflowBodySchema.partial().extend({
 
 const runBodySchema = z.object({
   name: z.string().trim().min(1).max(255),
-  status: z.enum(['completed', 'failed', 'running']),
+  status: z.enum(['completed', 'failed', 'running', 'cancelled']),
   provider: z.string().max(120).optional(),
+  model: z.string().max(120).optional(),
+  // Observability fields, all optional so an older client still records a run.
+  durationMs: z.number().int().nonnegative().max(86_400_000).optional(),
+  nodeCount: z.number().int().nonnegative().max(100_000).optional(),
+  failureCount: z.number().int().nonnegative().max(100_000).optional(),
+  failureKind: z.string().max(40).optional(),
+  error: z.string().max(500).optional(),
+  startedAt: z.string().datetime().optional(),
+  finishedAt: z.string().datetime().optional(),
 });
 
 const idSchema = z.string().uuid();
@@ -112,6 +121,47 @@ export function setupWorkflowRoutes(app) {
     handle(async (req, res) => {
       const workflows = await listWorkflows(ownerOf(req));
       res.json(workflows);
+    }),
+  );
+
+  // NOTE: the two /runs GET routes are registered BEFORE `/api/workflows/:id`
+  // on purpose. Express matches in registration order, and `runs` would
+  // otherwise be captured by `:id` and rejected as a malformed uuid.
+
+  /** Recent runs across all of the caller's workflows, most recent first. */
+  app.get(
+    '/api/workflows/runs',
+    handle(async (req, res) => {
+      const limit = Number(req.query.limit);
+      const runs = await listRuns(ownerOf(req), {
+        limit: Number.isFinite(limit) ? limit : undefined,
+      });
+      res.json({ runs });
+    }),
+  );
+
+  /** Run history for one workflow, scoped to the caller. */
+  app.get(
+    '/api/workflows/:id/runs',
+    handle(async (req, res) => {
+      const parsedId = idSchema.safeParse(req.params.id);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: 'invalid_id', message: 'That is not a workflow id.' });
+      }
+
+      // Confirm the workflow exists and belongs to the caller before listing,
+      // so a probe for another owner's id returns 404, not an empty list.
+      const workflow = await getWorkflowById(ownerOf(req), parsedId.data);
+      if (!workflow) {
+        return res.status(404).json({ error: 'not_found', message: 'No such workflow.' });
+      }
+
+      const limit = Number(req.query.limit);
+      const runs = await listRuns(ownerOf(req), {
+        workflowId: parsedId.data,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      });
+      res.json({ runs });
     }),
   );
 
@@ -203,19 +253,19 @@ export function setupWorkflowRoutes(app) {
     }),
   );
 
-  /** Record the outcome of a run against a workflow's metadata. */
+  /** Record the outcome of a run as its own row in the run-history table. */
   app.post(
     '/api/workflows/runs',
     handle(async (req, res) => {
       const parsed = runBodySchema.safeParse(req.body);
       if (!parsed.success) return validationFailure(res, parsed.error);
 
-      const { name, status, provider } = parsed.data;
-      const metadata = await recordRun(ownerOf(req), name, { status, provider });
-      if (!metadata) {
+      const { name, ...run } = parsed.data;
+      const record = await recordRun(ownerOf(req), name, run);
+      if (!record) {
         return res.status(404).json({ error: 'not_found', message: 'No such workflow.' });
       }
-      return res.json({ metadata });
+      return res.status(201).json({ run: record });
     }),
   );
 }

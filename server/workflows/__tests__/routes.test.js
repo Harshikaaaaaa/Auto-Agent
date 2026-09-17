@@ -286,17 +286,27 @@ describe.skipIf(!mysqlAvailable)('workflow API', () => {
   });
 
   describe('POST /api/workflows/runs', () => {
-    it('records a run outcome', async () => {
+    it('records a run outcome as its own row', async () => {
       await api('/api/workflows', { method: 'POST', body: validBody('Runnable') });
 
       const { status, json } = await api('/api/workflows/runs', {
         method: 'POST',
-        body: { name: 'Runnable', status: 'completed', provider: 'openrouter' },
+        body: {
+          name: 'Runnable',
+          status: 'completed',
+          provider: 'openrouter',
+          model: 'gpt-oss-120b',
+          durationMs: 3200,
+          nodeCount: 4,
+        },
       });
 
-      expect(status).toBe(200);
-      expect(json.metadata.runCount).toBe(1);
-      expect(json.metadata.lastExecutionStatus).toBe('completed');
+      expect(status).toBe(201);
+      expect(json.run.status).toBe('completed');
+      expect(json.run.model).toBe('gpt-oss-120b');
+      expect(json.run.durationMs).toBe(3200);
+      expect(json.run.nodeCount).toBe(4);
+      expect(json.run.id).toMatch(/^[0-9a-f-]{36}$/);
     });
 
     it('returns 404 for an unknown workflow name', async () => {
@@ -313,6 +323,59 @@ describe.skipIf(!mysqlAvailable)('workflow API', () => {
         body: { name: 'Runnable', status: 'exploded' },
       });
       expect(status).toBe(400);
+    });
+  });
+
+  describe('run history reads', () => {
+    it('lists a workflow’s runs newest-first', async () => {
+      const created = await api('/api/workflows', {
+        method: 'POST',
+        body: validBody('Historied'),
+      });
+
+      await api('/api/workflows/runs', {
+        method: 'POST',
+        body: { name: 'Historied', status: 'completed' },
+      });
+      await api('/api/workflows/runs', {
+        method: 'POST',
+        body: { name: 'Historied', status: 'failed', failureKind: 'auth' },
+      });
+
+      const { status, json } = await api(`/api/workflows/${created.json.id}/runs`);
+      expect(status).toBe(200);
+      expect(json.runs).toHaveLength(2);
+      expect(json.runs[0].status).toBe('failed');
+      expect(json.runs[0].failureKind).toBe('auth');
+    });
+
+    it('lists recent runs across all workflows', async () => {
+      await api('/api/workflows', { method: 'POST', body: validBody('A') });
+      await api('/api/workflows', { method: 'POST', body: validBody('B') });
+      await api('/api/workflows/runs', {
+        method: 'POST',
+        body: { name: 'A', status: 'completed' },
+      });
+      await api('/api/workflows/runs', {
+        method: 'POST',
+        body: { name: 'B', status: 'completed' },
+      });
+
+      const { status, json } = await api('/api/workflows/runs');
+      expect(status).toBe(200);
+      expect(json.runs.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('does not confuse /api/workflows/runs with a workflow id', async () => {
+      // `runs` is registered before `:id`; if the order regressed this would 400.
+      const { status } = await api('/api/workflows/runs');
+      expect(status).toBe(200);
+    });
+
+    it('returns 404 listing runs for an unknown workflow id', async () => {
+      // A well-formed but nonexistent uuid v4 (variant nibble 8-b).
+      const { status } = await api('/api/workflows/11111111-1111-4111-8111-111111111111/runs');
+      expect(status).toBe(404);
     });
   });
 

@@ -1,8 +1,5 @@
 {
   "name": "AutoAgent",
   "description": "A node-based automation workflow builder inspired by n8n, powered by Gemini to generate and optimize complex logic flows.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
+  "requestFramePermissions": ["camera", "microphone"]
 }

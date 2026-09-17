@@ -1,16 +1,8 @@
 import { Workflow, WorkflowNode, WorkflowEdge } from '@features/workflow/types';
-import { findReusableToolTemplate, getAllTools, rankToolMatches, CapabilityMatch } from '@features/tools/toolRegistry';
-import { AI_CONFIG } from '@features/ai/config';
-import { generateWorkflow } from '@features/ai/services/aiService';
+import { findReusableToolTemplate, getAllTools, rankToolMatches, describeCatalog, CapabilityMatch } from '@features/tools/toolRegistry';
+import { requestPlan, requestWorkflow } from '@features/ai/services/aiClient';
+import { normalizeGeneratedWorkflow } from '@features/ai/services/workflowNormalizer';
 import { NodeType } from '@/shared/types';
-
-// Get API key from Vite define
-const getApiKey = () => {
-    if (typeof process !== 'undefined' && process.env) {
-        return process.env['OPENROUTER_API_KEY'];
-    }
-    return '';
-};
 
 
 export interface WorkflowPlan {
@@ -259,82 +251,24 @@ export const generateWorkflowPlan = async (prompt: string, model: string): Promi
         };
     }
 
-    const planPrompt = `You are a workflow architect. Given this user request, create a BRIEF execution plan.
-
-USER REQUEST: "${prompt}"
-
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "title": "Short workflow name",
-  "description": "One sentence summary",
-  "steps": [
-    { "order": 1, "type": "trigger", "label": "Start", "description": "Initialize" },
-    { "order": 2, "type": "process", "label": "Process Name", "description": "What it does", "toolName": "optional" },
-    { "order": 3, "type": "output", "label": "Result", "description": "Final output" }
-  ],
-  "estimatedTime": "Fast / Medium / Slow",
-  "requiredTools": ["tool_id_1", "tool_id_2"]
-}
-
-Keep it SHORT - maximum 5 steps. Focus on the CORE workflow path.`;
-
-    // If the selected model/provider is OpenRouter, call the OpenRouter API directly for a fast plan
-    const useOpenRouter = model && model.toLowerCase().includes('openrouter') || AI_CONFIG.provider === 'openrouter' && model === AI_CONFIG.openRouterModel;
-
-    if (useOpenRouter) {
-        try {
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${getApiKey()}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model,
-                    messages: [{ role: 'user', content: planPrompt }],
-                    response_format: { type: 'json_object' }
-                })
-            });
-
-            if (!response.ok) throw new Error('Plan generation failed');
-
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (!content) throw new Error('Empty plan response');
-
-            const plan = JSON.parse(content) as WorkflowPlan;
-            return plan;
-        } catch (err) {
-            console.error('Plan generation error:', err);
-            throw err;
-        }
-    }
-
-    // Otherwise, use the local AI abstraction (aiService) to generate a lightweight workflow, then convert to a plan
+    // Ask the server to plan. The prompt template and the provider credential
+    // both live server-side; the browser only supplies the request and the
+    // catalog of tools that actually exist. Task 8 replaces the heuristic paths
+    // above so this becomes the only route.
     try {
-        const wf = await generateWorkflow(`${planPrompt}`);
-        // Convert Workflow -> WorkflowPlan
-        const steps = wf.nodes.map((n, idx) => ({
-            id: n.id,
-            order: idx + 1,
-            type: (n.data?.type as any) || 'process',
-            label: n.data?.label || `Step ${idx + 1}`,
-            description: n.data?.description || '',
-            inputs: n.data?.stateContract?.inputKeys || [],
-            outputs: n.data?.stateContract?.outputKeys || []
-        } as PlanStep));
-
-        const plan: WorkflowPlan = {
-            title: `Plan for: ${prompt.substring(0, 70)}`,
-            description: prompt,
-            steps,
-            estimatedTime: 'Medium',
-            requiredTools: wf.nodes.map(n => n.data?.toolId).filter(Boolean) as string[]
-        };
-
-        return plan;
+        const { plan } = await requestPlan({
+            prompt,
+            catalog: describeCatalog(),
+            hints: rankedMatches.slice(0, 8).map(match => ({
+                toolId: match.toolId,
+                actionName: match.actionName,
+                score: match.score
+            })),
+            model
+        });
+        return plan as WorkflowPlan;
     } catch (err) {
-        console.error('Fallback plan generation error:', err);
+        console.error('Plan generation error:', err);
         throw err;
     }
 };
@@ -552,32 +486,15 @@ export const generateNodeForStep = async (
 
     const nodePrompt = `Generate a workflow node that performs this task:\n\nSTEP: "${step.label}"\nDESCRIPTION: "${step.description}"\nTYPE: "${step.type}"\n\nAvailable tools: ${availableTools.join(', ')}\n\nReturn ONLY valid JSON:\n{\n  "label": "Node name",\n  "description": "Instructions",\n  "toolId": "tool_id_if_applicable",\n  "toolAction": "action_name_if_applicable",\n  "stateContract": {\n    "inputKeys": ["key1"],\n    "outputKeys": ["result"]\n  }\n}`;
 
-    const useOpenRouter = model && model.toLowerCase().includes('openrouter');
-
-    if (useOpenRouter) {
-        try {
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${getApiKey()}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ model, messages: [{ role: 'user', content: nodePrompt }] })
-            });
-
-            if (!response.ok) throw new Error('Node generation failed');
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (!content) throw new Error('Empty node response');
-            return JSON.parse(content);
-        } catch (err) {
-            console.error(`Failed to generate node for step "${step.label}" via OpenRouter:`, err);
-        }
-    }
-
-    // Fallback: use local AI abstraction to generate a small workflow for this step and extract node info
+    // Fallback: ask the server to generate a small workflow for this step and
+    // extract the node from it. The provider credential stays server-side.
     try {
-        const wf = await generateWorkflow(nodePrompt);
+        const { workflow } = await requestWorkflow({
+            prompt: nodePrompt,
+            catalog: describeCatalog(),
+            model
+        });
+        const wf = normalizeGeneratedWorkflow(workflow);
         // If returned workflow has a node matching label, use it; else use first node
         const found = wf.nodes.find(n => (n.data?.label || '').toLowerCase().includes((step.label || '').toLowerCase())) || wf.nodes[0];
         if (found) {

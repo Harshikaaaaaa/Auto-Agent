@@ -46,10 +46,12 @@ jobs:
       - name: Build
         run: npm run build:only
 
+      # Provider keys must never be inlined into client assets. This gate exists
+      # because they previously were, and were recoverable from dist/.
+      - name: Assert no secrets in built bundle
+        run: node scripts/assert-no-secrets-in-bundle.mjs
+
       # NOTE: repo-wide `format:check` is deliberately not gated yet. The legacy
       # tree predates Prettier and is rewritten across Tasks 8-15; gating now
       # would bury the security fixes under a whole-repo reformat diff. The
       # `npm run format` script is available and the gate is added in Task 15.
-      #
-      # NOTE: the "no secrets in the built bundle" gate is added in Task 2,
-      # together with the change that stops inlining provider keys.

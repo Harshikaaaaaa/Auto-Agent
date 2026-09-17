@@ -44,6 +44,42 @@ export interface CapabilityMatch {
     rationale: string[];
 }
 
+/**
+ * Compact, serialisable description of every registered tool.
+ *
+ * This is what the planner sends to the model, and it is the ONLY source of
+ * truth the model may bind a step to. If a capability is absent here, the
+ * planner must mark the step unsupported rather than substitute a different
+ * tool. Task 6 enriches each action with schemas and side-effect class.
+ */
+export function describeCatalog(): Array<{
+    id: string;
+    name: string;
+    description: string;
+    capabilities: string[];
+    authenticated: boolean;
+    actions: Array<{
+        name: string;
+        description: string;
+        inputKeys: string[];
+        outputKeys: string[];
+    }>;
+}> {
+    return getAllTools().map(tool => ({
+        id: tool.id,
+        name: tool.name,
+        description: tool.description,
+        capabilities: tool.capabilities ?? [],
+        authenticated: tool.isAuthenticated(),
+        actions: tool.actions.map(action => ({
+            name: action.name,
+            description: action.description,
+            inputKeys: action.inputKeys,
+            outputKeys: action.outputKeys
+        }))
+    }));
+}
+
 export function getToolCapabilityMatches(searchText: string): CapabilityMatch[] {
     return rankToolMatches(searchText);
 }

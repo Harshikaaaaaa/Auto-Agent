@@ -6,18 +6,52 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { setupWorkflowRoutes } from './workflowHandler.js';
+import { env, publicAiConfig } from './config/env.js';
+import { setupAiRoutes } from './ai/routes.js';
+import { probeConfiguredModel } from './ai/providers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3234;
+const PORT = env.PORT;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
+
+// AI backend-for-frontend. Provider credentials live only on this side.
+setupAiRoutes(app);
 
 // Setup workflow routes
 setupWorkflowRoutes(app);
+
+/**
+ * Startup probe for the configured model.
+ *
+ * Non-fatal by design: a network blip, or a dev machine without Ollama running,
+ * must not stop the server from booting. The outcome is logged here and served
+ * from /api/ai/health so a misconfiguration is visible instead of silent.
+ */
+async function reportAiConfiguration() {
+  const cfg = publicAiConfig();
+  const configured = Object.entries(cfg.providers)
+    .filter(([, v]) => v.configured)
+    .map(([k]) => k);
+  console.log(
+    `[ai] provider=${cfg.defaultProvider} configured=[${configured.join(', ')}] ` +
+      `override=${cfg.allowProviderOverride ? 'allowed' : 'locked'}`,
+  );
+
+  const probe = await probeConfiguredModel();
+  if (probe.ok) {
+    console.log(`[ai] model check OK: ${probe.provider}/${probe.model} (${probe.detail})`);
+  } else {
+    console.warn(
+      `[ai] MODEL CHECK FAILED: ${probe.provider}/${probe.model} — ${probe.detail}. ` +
+        `AI features will fail until this is fixed. See GET /api/ai/health.`,
+    );
+  }
+}
 
 let sock;
 let qrCodeData = null;
@@ -283,7 +317,8 @@ async function startServer() {
     });
 
     app.listen(PORT, () => {
-        console.log(`WhatsApp Bridge Server running on http://localhost:${PORT}`);
+        console.log(`AutoAgent server running on http://localhost:${PORT}`);
+        void reportAiConfiguration();
     });
 }
 

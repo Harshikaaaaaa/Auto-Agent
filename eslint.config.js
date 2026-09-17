@@ -65,12 +65,20 @@ export default tseslint.config(
 
   // ---------- Tests ----------
   {
-    files: ['src/**/*.{test,spec}.{ts,tsx}', 'src/test/**/*.{ts,tsx}'],
+    files: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      'src/test/**/*.{ts,tsx}',
+      'server/**/*.{test,spec}.js',
+    ],
     languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
       globals: { ...globals.browser, ...globals.node },
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      // Tests intentionally assert on thrown values without re-wrapping them.
+      'preserve-caught-error': 'off',
     },
   },
 

@@ -1,12 +1,6 @@
 import { Tool, ToolAction } from './types';
 import { registerTool } from './toolRegistry';
-
-const getOpenRouterKey = () => {
-    if (typeof process !== 'undefined' && process.env) {
-        return process.env['OPENROUTER_API_KEY'];
-    }
-    return '';
-};
+import { requestConnectorDefinition } from '@features/ai/services/aiClient';
 
 
 export interface GeneratedConnectorConfig {
@@ -96,52 +90,16 @@ export const generateConnectorDefinition = async (
     requiredActions: string[],
     model: string
 ): Promise<GeneratedConnectorConfig> => {
-    const prompt = `You are an API connector designer. Create a connector definition for this tool:
-
-TOOL NAME: ${toolName}
-DESCRIPTION: ${toolDescription}
-REQUIRED ACTIONS: ${requiredActions.join(', ')}
-
-Return ONLY valid JSON:
-{
-  "id": "tool_slug_id",
-  "name": "Tool Display Name",
-  "description": "What this tool does",
-  "apiEndpoint": "https://api.example.com/v1",
-  "authType": "apikey",
-  "actions": [
-    {
-      "name": "action_name",
-      "description": "What this action does",
-      "method": "POST",
-      "endpoint": "/endpoint",
-      "inputKeys": ["param1"],
-      "outputKeys": ["result"]
-    }
-  ]
-}`;
-
     try {
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                                'Authorization': `Bearer ${getOpenRouterKey()}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: prompt }]
-            })
+        // The prompt template lives server-side (server/ai/prompts.js) so the
+        // provider key never reaches the browser.
+        const { connector } = await requestConnectorDefinition({
+            toolName,
+            toolDescription,
+            requiredActions,
+            model
         });
-
-        if (!response.ok) throw new Error('Connector generation failed');
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
-        if (!content) throw new Error('Empty connector response');
-
-        const config = JSON.parse(content) as GeneratedConnectorConfig;
-        return config;
+        return connector as GeneratedConnectorConfig;
     } catch (err) {
         console.error('Connector generation error:', err);
         throw err;

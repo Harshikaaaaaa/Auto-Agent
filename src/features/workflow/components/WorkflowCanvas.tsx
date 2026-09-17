@@ -32,7 +32,8 @@ import {
     Redo2,
     CheckCircle2
 } from 'lucide-react';
-import { generateWorkflowPlan, planToWorkflow, PlanValidationError } from '@features/ai/services/workflowPlanGenerator';
+import { generateWorkflowPlan, planToWorkflow, PlanValidationError, type WorkflowPlan } from '@features/ai/services/workflowPlanGenerator';
+import { PlanPreview } from './PlanPreview';
 import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
@@ -40,7 +41,7 @@ import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
 import { getTool, getAllTools } from '@features/tools/toolRegistry';
-import type { FlowEdge, ReusableNodeTemplate } from '@features/workflow/types';
+import type { FlowEdge, ReusableNodeTemplate, Workflow } from '@features/workflow/types';
 import { validateCondition } from '@features/workflow/services/safeExpression';
 import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
 import { saveWorkflow, loadWorkflow, listWorkflows, deleteWorkflow, SavedWorkflow } from '@features/workflow/services/workflowStorage';
@@ -481,7 +482,19 @@ export function WorkflowCanvas() {
             prompt: 'Create a content approval workflow that drafts a message, checks it for formatting issues, and pauses for approval before sending.'
         }
     ], []);
-    const [workflowPlan, setWorkflowPlan] = useState<any>(null);
+    /**
+     * The plan awaiting review, and the graph it produced.
+     *
+     * `id` exists so the preview can be keyed on it: a new generation remounts
+     * the editor with fresh state instead of an effect quietly overwriting
+     * whatever the user had already edited.
+     */
+    const [planDraft, setPlanDraft] = useState<{
+        id: string;
+        plan: WorkflowPlan;
+        workflow: Workflow;
+    } | null>(null);
+    const [isCommittingPlan, setIsCommittingPlan] = useState(false);
     const [planStep, setPlanStep] = useState(0);
     const [selectedModel, setSelectedModel] = useState<string>(() => {
         try {
@@ -769,21 +782,14 @@ export function WorkflowCanvas() {
         try {
             const modelForGeneration = effectiveModel;
             const plan = await generateWorkflowPlan(promptAnalysis.normalized || prompt, modelForGeneration);
-            const workflowSkeleton = planToWorkflow(plan);
-            // The plan's own bindings, validated against the registry. Keyword
-            // rankings are not shown here: they no longer decide anything, and
-            // presenting them as routing would misdescribe what happened.
-            const skeletonWithMeta = {
-                ...workflowSkeleton,
-                prompt,
+            setPlanDraft({
+                id: `plan-${Date.now()}`,
                 plan,
-                capabilityMatches: plan.capabilityMatches
-            };
-            setWorkflowPlan(skeletonWithMeta);
-            const initStatuses: Record<string, 'pending' | 'generating' | 'done' | 'error'> = {};
-            skeletonWithMeta.nodes.forEach((n: any) => initStatuses[n.id] = 'pending');
-            setGenerationStatuses(initStatuses);
+                workflow: planToWorkflow(plan)
+            });
+            setGenerationStatuses({});
             setPlanStep(0);
+            setIsCommittingPlan(false);
             setActiveTaskDraft('');
             setMagicPrompt('');
             if (activeId) {
@@ -914,46 +920,45 @@ export function WorkflowCanvas() {
         }
     }, [activeTaskId, chatInput, nodes, reusableHelperNodes, reusableToolNodes, selectedNodeId, setNodes, setEdges, updateActiveTaskMessages]);
 
-    const handleGenerateNodesStreaming = async () => {
-        if (!workflowPlan) return;
-        
-        // Stream nodes one by one onto the canvas
-        const formattedNodes = workflowPlan.nodes.map((n: any) => ({
-            ...n,
-            position: { x: n.position.x + 300, y: n.position.y + 150 },
-            data: {
-                ...n.data,
-                ...(n.id === 'root' && workflowPlan.initialState ? { initialState: workflowPlan.initialState } : {})
-            }
+    /**
+     * Put the reviewed graph on the canvas.
+     *
+     * The argument is the draft as the user LEFT it in the preview — renamed
+     * steps, deleted steps, filled-in values and all — not the plan as generated.
+     * Nothing is re-derived here: what the preview showed is what lands.
+     */
+    const handleCommitPlan = async (reviewed: Workflow) => {
+        const formattedNodes = reviewed.nodes.map(node => ({
+            ...node,
+            position: { x: node.position.x + 300, y: node.position.y + 150 }
         }));
-        
-        const formattedEdges = workflowPlan.edges.map((e: any) => ({
-            ...e,
+
+        const formattedEdges = reviewed.edges.map(edge => ({
+            ...edge,
             animated: true,
             style: { strokeWidth: 2, stroke: '#2dd4bf', strokeDasharray: '4,4' },
             markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }
         }));
-        
-        // Stream the nodes onto the canvas one at a time.
-        //
-        // There is no per-node model call here any more. Node data is derived
-        // from the validated plan step by `buildNodeFromPlanStep`, so what the
-        // preview showed is exactly what lands on the canvas. Previously each
-        // node was re-generated by asking the model again and then running the
-        // answer through a keyword ladder, which is how a plan and its canvas
-        // could disagree.
+
+        setIsCommittingPlan(true);
+        setPlanStep(0);
+
+        // Streamed one at a time purely so the user can see what arrived. There
+        // is no model call in this loop — node data came from the validated plan
+        // step via `buildNodeFromPlanStep`.
         for (let i = 0; i < formattedNodes.length; i++) {
             const node = formattedNodes[i];
             setGenerationStatuses(prev => ({ ...prev, [node.id]: 'generating' }));
             await new Promise(resolve => setTimeout(resolve, 120));
-            setNodes(prev => [...prev, node]);
+            setNodes(prev => [...prev, node as Node]);
             setGenerationStatuses(prev => ({ ...prev, [node.id]: 'done' }));
             setPlanStep(i + 1);
         }
-        
-        setEdges(formattedEdges);
+
+        setEdges(formattedEdges as Edge[]);
         setMagicPrompt('');
-        setWorkflowPlan(null);
+        setPlanDraft(null);
+        setIsCommittingPlan(false);
         setTimeout(() => fitView({ padding: 0.2 }), 100);
     };
 
@@ -1774,102 +1779,20 @@ export function WorkflowCanvas() {
                 )}
 
                 {/* Plan Preview Modal */}
-                {workflowPlan && (
-                    <div className="absolute inset-0 z-40 flex items-center justify-center p-6 bg-[#050505]/80 backdrop-blur-md">
-                        <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
-                            <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between">
-                                <div>
-                                    <h3 className="font-bold text-lg text-white">Workflow Preview</h3>
-                                    <p className="text-[11px] text-white/40 mt-1">{workflowPlan.nodes.length} nodes • {workflowPlan.edges.length} connections</p>
-                                </div>
-                                <button onClick={() => setWorkflowPlan(null)} className="p-1.5 hover:bg-white/5 rounded-full text-white/40 hover:text-white transition-colors">
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
-                                {workflowPlan.capabilityMatches && workflowPlan.capabilityMatches.length > 0 && (
-                                    <div className="rounded-xl border border-bolt-accent/20 bg-bolt-accent/5 p-4">
-                                        <div className="flex items-center justify-between mb-3">
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Recommended reusable tools</p>
-                                                <h4 className="text-sm font-semibold text-white">Capability routing</h4>
-                                            </div>
-                                            <div className="text-[10px] text-emerald-300">{workflowPlan.capabilityMatches.length} matches</div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            {workflowPlan.capabilityMatches.map((match: any) => (
-                                                <div key={`${match.toolId}-${match.actionName}`} className="rounded-lg border border-white/10 bg-black/20 p-2.5">
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div>
-                                                            <div className="text-[11px] font-semibold text-white">{match.toolName}: {match.actionName.replace(/_/g, ' ')}</div>
-                                                            <div className="text-[10px] text-white/40">Score {match.score}</div>
-                                                        </div>
-                                                        <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-emerald-300">
-                                                            recommended
-                                                        </div>
-                                                    </div>
-                                                    {match.rationale && match.rationale.length > 0 && (
-                                                        <div className="mt-2 text-[10px] text-white/50">
-                                                            {match.rationale.slice(0, 2).join(' • ')}
-                                                        </div>
-                                                    )}
-                                                    <button
-                                                        onClick={() => {
-                                                            const defaultMatch = workflowPlan.capabilityMatches.find((m: any) => m.toolId === match.toolId && m.actionName === match.actionName);
-                                                            if (defaultMatch) {
-                                                                workflowPlan.capabilityMatches = [defaultMatch, ...workflowPlan.capabilityMatches.filter((m: any) => !(m.toolId === match.toolId && m.actionName === match.actionName))];
-                                                                setWorkflowPlan({ ...workflowPlan, capabilityMatches: workflowPlan.capabilityMatches });
-                                                            }
-                                                        }}
-                                                        className="mt-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-white/70 hover:bg-white/10"
-                                                    >
-                                                        Use this capability
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {workflowPlan.nodes.map((node: any, idx: number) => {
-                                    const status = generationStatuses[node.id] || (idx < planStep ? 'done' : 'pending');
-                                    return (
-                                        <div key={idx} className={`p-4 rounded-xl border transition-all ${status === 'done' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/10'}`}>
-                                            <div className="flex items-start gap-3">
-                                                {status === 'done' ? (
-                                                    <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                                                ) : status === 'generating' ? (
-                                                    <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"><Loader2 className="w-4 h-4 animate-spin" /></div>
-                                                ) : status === 'error' ? (
-                                                    <div className="w-5 h-5 text-red-400 flex items-center justify-center flex-shrink-0 mt-0.5">✖</div>
-                                                ) : (
-                                                    <div className="w-5 h-5 rounded-full border-2 border-white/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                        <span className="text-[10px] font-bold text-white/40">{idx + 1}</span>
-                                                    </div>
-                                                )}
-                                                <div className="flex-1">
-                                                    <div className="font-semibold text-white">{node.data.label}</div>
-                                                    <div className="text-[12px] text-white/50 mt-1">{node.data.description}</div>
-                                                    {node.data.stateContract?.outputKeys && (
-                                                        <div className="text-[10px] text-emerald-400/60 mt-2 flex items-center gap-1">Outputs: {node.data.stateContract.outputKeys.join(', ')}</div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-3">
-                                <div className="text-[12px] text-white/40">
-                                    Step {planStep + 1} / {workflowPlan.nodes.length}
-                                </div>
-                                <button onClick={handleGenerateNodesStreaming} className="flex items-center gap-2 px-6 py-2.5 bg-bolt-accent text-black rounded-xl text-xs font-bold hover:bg-bolt-accent/90 transition-all">
-                                    <Play className="w-3.5 h-3.5 fill-black" />
-                                    Generate Workflow
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                {planDraft && (
+                    <PlanPreview
+                        // Keyed per generation so a new plan gets a fresh editor
+                        // rather than one holding the previous plan's edits.
+                        key={planDraft.id}
+                        plan={planDraft.plan}
+                        draft={planDraft.workflow}
+                        toolStatuses={toolStatuses}
+                        statuses={generationStatuses}
+                        committedCount={planStep}
+                        isCommitting={isCommittingPlan}
+                        onCancel={() => setPlanDraft(null)}
+                        onCommit={handleCommitPlan}
+                    />
                 )}
 
                 {/* Templates Modal */}

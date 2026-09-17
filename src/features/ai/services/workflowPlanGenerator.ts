@@ -465,20 +465,43 @@ export function buildNodeFromPlanStep(step: PlanStep): NodeData {
     };
 }
 
-/** Turn a validated plan into a linear graph. */
-export function planToWorkflow(plan: WorkflowPlan): Workflow {
-    const nodes: WorkflowNode[] = plan.steps.map((step, index) => ({
-        id: step.id,
-        type: NODE_TYPE_FOR_STEP[step.type],
-        position: { x: 300 + index * 250, y: 0 },
-        data: buildNodeFromPlanStep(step)
+const NODE_ORIGIN_X = 300;
+const NODE_SPACING_X = 250;
+
+/**
+ * Re-space and re-link a linear chain of plan nodes.
+ *
+ * Exported because the plan preview lets a user delete a step, and the chain has
+ * to close up behind it. Keeping the layout and the edge ids in one place means
+ * an edited draft is indistinguishable from a freshly planned one.
+ */
+export function relinkPlanGraph(nodes: WorkflowNode[]): {
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+} {
+    const placed: WorkflowNode[] = nodes.map((node, index) => ({
+        ...node,
+        position: { x: NODE_ORIGIN_X + index * NODE_SPACING_X, y: 0 }
     }));
 
-    const edges: WorkflowEdge[] = nodes.slice(1).map((node, index) => ({
-        id: `edge_${nodes[index].id}_${node.id}`,
-        source: nodes[index].id,
+    const edges: WorkflowEdge[] = placed.slice(1).map((node, index) => ({
+        id: `edge_${placed[index].id}_${node.id}`,
+        source: placed[index].id,
         target: node.id
     }));
 
+    return { nodes: placed, edges };
+}
+
+/** Turn a validated plan into a linear graph. */
+export function planToWorkflow(plan: WorkflowPlan): Workflow {
+    const built: WorkflowNode[] = plan.steps.map(step => ({
+        id: step.id,
+        type: NODE_TYPE_FOR_STEP[step.type],
+        position: { x: 0, y: 0 },
+        data: buildNodeFromPlanStep(step)
+    }));
+
+    const { nodes, edges } = relinkPlanGraph(built);
     return { nodes, edges, initialState: {} };
 }

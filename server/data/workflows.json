@@ -1,0 +1,196 @@
+[
+  {
+    "name": "NEWS",
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 600,
+          "y": 150
+        },
+        "data": {
+          "label": "Start",
+          "description": "Initialize the workflow and capture the input request.",
+          "type": "trigger",
+          "stateContract": {
+            "inputKeys": [
+              "input"
+            ],
+            "outputKeys": [
+              "request"
+            ]
+          }
+        },
+        "width": 180,
+        "height": 100
+      },
+      {
+        "id": "capture_data",
+        "type": "ai_agent",
+        "position": {
+          "x": 850,
+          "y": 150
+        },
+        "data": {
+          "label": "Scrape source data",
+          "description": "Read the target page or source content and extract the relevant records.",
+          "type": "ai_agent",
+          "stateContract": {
+            "inputKeys": [
+              "source_url",
+              "page_url",
+              "input",
+              "query"
+            ],
+            "outputKeys": [
+              "raw_data"
+            ]
+          }
+        },
+        "width": 322,
+        "height": 128
+      },
+      {
+        "id": "action_result",
+        "type": "tool",
+        "position": {
+          "x": 1100,
+          "y": 150
+        },
+        "data": {
+          "label": "Save results to Google Sheets",
+          "description": "Write the final structured output to a spreadsheet for reporting and follow-up.",
+          "type": "tool",
+          "stateContract": {
+            "inputKeys": [
+              "categorized_results",
+              "rows",
+              "data"
+            ],
+            "outputKeys": [
+              "updatedRange",
+              "updatedRows"
+            ]
+          },
+          "toolId": "google_sheets",
+          "toolAction": "append_row"
+        },
+        "width": 383,
+        "height": 100
+      },
+      {
+        "id": "result",
+        "type": "output",
+        "position": {
+          "x": 1350,
+          "y": 150
+        },
+        "data": {
+          "label": "Return result",
+          "description": "Return the final workflow result to the user or downstream node.",
+          "type": "output",
+          "stateContract": {
+            "inputKeys": [
+              "result"
+            ],
+            "outputKeys": [
+              "final_output"
+            ]
+          }
+        },
+        "width": 150,
+        "height": 122
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge_0_1",
+        "source": "start",
+        "target": "capture_data",
+        "animated": true,
+        "style": {
+          "strokeWidth": 2,
+          "stroke": "#2dd4bf",
+          "strokeDasharray": "4,4"
+        },
+        "markerEnd": {
+          "type": "arrowclosed",
+          "color": "#2dd4bf"
+        }
+      },
+      {
+        "id": "edge_1_2",
+        "source": "capture_data",
+        "target": "action_result",
+        "animated": true,
+        "style": {
+          "strokeWidth": 2,
+          "stroke": "#2dd4bf",
+          "strokeDasharray": "4,4"
+        },
+        "markerEnd": {
+          "type": "arrowclosed",
+          "color": "#2dd4bf"
+        }
+      },
+      {
+        "id": "edge_2_3",
+        "source": "action_result",
+        "target": "result",
+        "animated": true,
+        "style": {
+          "strokeWidth": 2,
+          "stroke": "#2dd4bf",
+          "strokeDasharray": "4,4"
+        },
+        "markerEnd": {
+          "type": "arrowclosed",
+          "color": "#2dd4bf"
+        }
+      }
+    ],
+    "version": 1,
+    "savedAt": "2026-09-10T16:49:41.318Z",
+    "runCount": 0,
+    "tags": [
+      "workflow",
+      "openrouter"
+    ],
+    "provider": "openrouter",
+    "metadata": {
+      "provider": "openrouter",
+      "runCount": 0,
+      "tags": [
+        "workflow",
+        "openrouter"
+      ],
+      "version": 1,
+      "savedAt": "2026-09-10T16:49:41.287Z",
+      "metadata": {
+        "benchmark": {
+          "openrouter": {
+            "latencyMs": 1200,
+            "costScore": 7,
+            "reliability": 8,
+            "quality": 8
+          },
+          "gemini": {
+            "latencyMs": 900,
+            "costScore": 8,
+            "reliability": 9,
+            "quality": 9
+          },
+          "ollama": {
+            "latencyMs": 500,
+            "costScore": 9,
+            "reliability": 6,
+            "quality": 7
+          }
+        },
+        "lastSelectedModel": "auto",
+        "lastExecutionStatus": "idle"
+      }
+    }
+  }
+]

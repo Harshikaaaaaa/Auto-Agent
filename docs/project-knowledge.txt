@@ -1,0 +1,497 @@
+AutoAgent — Project Knowledge (Post State-Graph Refactor)
+============================================================
+
+This document details the function-level operations and data flow of every file
+in the project. The architecture is a MANAGED STATE GRAPH: a shared GraphState
+object flows through a directed acyclic graph of nodes, where each node reads
+specific keys from state, processes them via Gemini AI, and writes specific
+keys back.
+
+
+================================================================================
+1. APP & CONFIG
+================================================================================
+
+src/app/App.tsx
+───────────────
+Purpose: Root component of the application.
+
+  App():
+    - Wraps the entire app in <ReactFlowProvider> to enable React Flow context.
+    - Renders <WorkflowCanvas /> as the sole child.
+
+src/app/main.tsx
+────────────────
+Purpose: Application entry point.
+
+  Execution:
+    - Targets the DOM element with ID "root".
+    - Wraps <App /> in <React.StrictMode> for development warnings.
+    - Imports global styles from index.css.
+
+src/config/constants.ts
+───────────────────────
+Purpose: Global application constants.
+
+  NODE_TYPES:
+    - Immutable object defining the five node types: TRIGGER, TOOL, AI_AGENT,
+      LOGIC, OUTPUT.
+    - Used for type-safe node type references throughout the app.
+
+
+================================================================================
+2. SHARED TYPES
+================================================================================
+
+src/shared/types/index.ts
+─────────────────────────
+Purpose: Cross-feature shared enumerations.
+
+  NodeType (enum):
+    - TRIGGER  = 'trigger'   → Entry point / initializer nodes
+    - TOOL     = 'tool'      → Utility / transformation nodes
+    - AI_AGENT = 'ai_agent'  → Intelligent processing nodes
+    - LOGIC    = 'logic'     → Decision / branching nodes
+    - OUTPUT   = 'output'    → Terminal / result nodes
+
+
+================================================================================
+3. WORKFLOW TYPES (THE STATE GRAPH)
+================================================================================
+
+src/features/workflow/types.ts
+──────────────────────────────
+Purpose: Core type definitions for the managed state graph.
+
+  GraphState:
+    - The shared state object that flows through the entire graph.
+    - Dynamic keys: [key: string]: any — each node reads/writes named keys.
+    - __metadata: GraphMetadata — internal bookkeeping, never modified by nodes.
+
+  GraphMetadata:
+    - runId: string          → Unique ID per execution run (crypto.randomUUID).
+    - startedAt: string      → ISO timestamp of run start.
+    - currentNodeId: string  → ID of the node currently executing (or null).
+    - status: enum           → 'idle' | 'running' | 'paused' | 'completed' | 'failed'.
+    - error?: string         → Error message if status is 'failed'.
+
+  NodeStateContract:
+    - inputKeys: string[]    → State keys this node READS.
+    - outputKeys: string[]   → State keys this node WRITES.
+    - reducer?: enum         → How writes combine with existing state:
+                                'overwrite' (default) — last write wins.
+                                'append'              — push to array.
+                                'merge'               — deep-merge objects.
+
+  NodeData:
+    - label: string          → Display name on the canvas.
+    - type: NodeType         → One of the five node types.
+    - description?: string   → Instructions for the AI on what this node does.
+    - icon?: string          → Optional icon name from lucide-react.
+    - stateContract?         → The NodeStateContract for this node.
+    - isRunning?: boolean    → True while the node is actively executing.
+    - lastSuccess?: boolean  → True if the last execution succeeded.
+    - output?: string        → Stringified JSON of the last execution output.
+
+  WorkflowNode:
+    - id, type, position, data (NodeData).
+
+  WorkflowEdge:
+    - id, source, target, label.
+
+  Workflow:
+    - nodes: WorkflowNode[]
+    - edges: WorkflowEdge[]
+    - initialState?: Record<string, any>  → Seed data for the GraphState.
+
+  ExecutionLog:
+    - node: string            → Node label.
+    - time: string            → Timestamp of completion.
+    - output: string          → Stringified JSON of node output.
+    - stateSnapshot?          → Full state (minus __metadata) after this node.
+
+
+================================================================================
+4. AI SERVICE
+================================================================================
+
+src/features/ai/services/geminiService.ts
+─────────────────────────────────────────
+Purpose: All Gemini AI interactions — workflow generation and node execution.
+
+  cleanJsonResponse(text: string): string
+    - Strips markdown code fences (```json ... ```) from raw AI responses.
+    - Returns clean JSON text ready for JSON.parse().
+
+  generateWorkflow(prompt: string): Promise<Workflow>
+    - INPUT: Natural language prompt from the user (e.g., "Analyze feedback").
+    - FLOW:
+      1. Constructs a system prompt explaining the state graph architecture:
+         - Defines the five node types.
+         - Explains NodeStateContract (inputKeys, outputKeys, reducer).
+         - Provides an example state flow (Trigger → Analyzer → Email → Output).
+         - Instructs the AI to also generate an initialState object.
+      2. Calls Gemini 2.5 Flash with:
+         - responseMimeType: "application/json"
+         - responseSchema: enforces nodes[], edges[], initialState structure.
+           Each node's data includes a stateContract with inputKeys/outputKeys.
+         - NOTE: initialState is declared as Type.STRING (not OBJECT) because
+           Gemini's API rejects OBJECT types with empty properties: {}.
+      3. Parses the JSON response into a Workflow object.
+      4. Post-parse: if initialState is a string, JSON.parse() it into an object.
+         Falls back to {} if parsing fails.
+    - OUTPUT: Workflow { nodes, edges, initialState }.
+    - ERROR: Throws "Failed to generate state graph." on parse failure.
+
+  executeNodeAction(
+      nodeLabel: string,
+      nodeDescription: string,
+      inputState: Record<string, any>,
+      outputKeys: string[]
+  ): Promise<Record<string, any>>
+    - INPUT:
+      - nodeLabel: Human-readable name of the node.
+      - nodeDescription: AI instructions for this node.
+      - inputState: Subset of GraphState (only the keys this node reads).
+      - outputKeys: The keys this node must produce.
+    - FLOW:
+      1. Builds a pipeline prompt:
+         - Frames the AI as a node in a state graph.
+         - Injects the inputState as JSON.
+         - Lists required outputKeys.
+         - Instructs: return ONLY a JSON object with those keys.
+      2. Calls Gemini 2.5 Flash with:
+         - responseMimeType: "application/json"
+         - responseSchema: object with each outputKey as a STRING property.
+      3. Parses the structured JSON response.
+    - OUTPUT: Record<string, any> keyed by outputKeys.
+    - ERROR: Returns an object with each outputKey set to the error message.
+
+src/features/ai/types.ts
+────────────────────────
+Purpose: TypeScript interfaces for AI service request/config types.
+
+  AIGenerationConfig:
+    - model, temperature?, maxTokens? — configuration for Gemini calls.
+
+  WorkflowGenerationRequest:
+    - prompt, config? — input to generateWorkflow.
+
+  NodeExecutionRequest:
+    - nodeLabel, nodeDescription, inputState, outputKeys — input to executeNodeAction.
+
+
+================================================================================
+5. EXECUTION ENGINE
+================================================================================
+
+src/features/workflow/hooks/useWorkflowExecution.ts
+───────────────────────────────────────────────────
+Purpose: React hook containing the stateful graph execution engine.
+
+  mergeIntoState(state, output, reducer): GraphState
+    - PURPOSE: Merges a node's output into the shared GraphState.
+    - LOGIC (per key in output):
+      - 'overwrite': state[key] = value.
+      - 'append':    If state[key] is array, push. Else create [existing, value].
+      - 'merge':     If both are objects, shallow merge. Else overwrite.
+    - Protects __metadata from being overwritten by node output.
+
+  useWorkflowExecution(nodes, edges, setNodes):
+    - RETURNS: { isExecuting, executionLogs, graphState, executeFlow, clearLogs }.
+
+    executeFlow():
+      - PRECONDITION: nodes.length > 0.
+      - FLOW:
+        1. SET isExecuting = true, clear logs.
+        2. INITIALIZE GraphState:
+           - Gathers any initialState stored on nodes (set during generation).
+           - Creates __metadata with runId (UUID), startedAt, status: 'running'.
+        3. TOPOLOGICAL SORT (Kahn's algorithm):
+           a. Compute in-degree for every node.
+           b. Seed queue with nodes having in-degree 0 (root nodes).
+        4. EXECUTION LOOP (while queue is non-empty):
+           a. Dequeue nodeId, skip if already visited.
+           b. Update __metadata.currentNodeId.
+           c. Set node.data.isRunning = true in UI.
+           d. READ:  Extract stateContract.inputKeys from current GraphState.
+           e. CALL:  executeNodeAction(label, description, inputSlice, outputKeys).
+           f. WRITE: mergeIntoState(state, output, reducer).
+           g. LOG:   Push ExecutionLog with output + stateSnapshot.
+           h. Set node.data.isRunning = false, lastSuccess = true in UI.
+           i. ENQUEUE CHILDREN: Decrement in-degree of all child nodes.
+              If child's in-degree reaches 0 → push to queue.
+        5. On error: set __metadata.status = 'failed', break.
+        6. On completion: set __metadata.status = 'completed', isExecuting = false.
+
+    clearLogs():
+      - Resets executionLogs to [] and graphState to null.
+
+
+================================================================================
+6. UI COMPONENTS
+================================================================================
+
+src/features/workflow/components/WorkflowNode.tsx
+─────────────────────────────────────────────────
+Purpose: Custom node component rendered on the React Flow canvas.
+
+  NodeIcon({ data: NodeData }):
+    - Returns a styled icon based on data.type:
+      - AI_AGENT → Cpu icon (white, 12×12, rounded-2xl).
+      - TRIGGER  → Zap icon (amber, 10×10).
+      - OUTPUT   → CheckCircle2 icon (emerald, 10×10).
+      - LOGIC    → GitBranch icon (purple, 10×10).
+      - TOOL     → Wrench icon (cyan, 10×10).
+      - Default  → Box icon (white/40).
+
+  StateKeyBadges({ stateContract? }):
+    - Renders small badges for each key in stateContract:
+      - inputKeys  → blue badge with "← keyName".
+      - outputKeys → green badge with "keyName →".
+    - Returns null if no stateContract or both arrays are empty.
+
+  BaseNode({ data, selected }):
+    - AI_AGENT rendering:
+      - Larger card (min-w-240, rounded-20, dark bg).
+      - Shows NodeIcon + label + "state node" subtitle.
+      - Shows StateKeyBadges below.
+      - Running spinner (Loader2) or success checkmark.
+    - All other types:
+      - Compact card (min-w-180, rounded-2xl).
+      - Shows NodeIcon + label + type subtitle.
+      - Shows StateKeyBadges.
+      - Running/success indicators.
+    - Both variants include React Flow Handle components (top = target, bottom = source).
+
+  WorkflowNode:
+    - memo(BaseNode) — exported as the component used by React Flow's nodeTypes map.
+
+src/features/workflow/components/WorkflowCanvas.tsx
+───────────────────────────────────────────────────
+Purpose: The main workspace — graph editor + execution controls.
+
+  nodeTypes:
+    - Maps { trigger, tool, ai_agent, logic, output } → WorkflowNode component.
+
+  WorkflowCanvas():
+    - STATE: nodes, edges, magicPrompt, isGenerating, isTesting, selectedNodeId.
+    - HOOKS: useWorkflowExecution → { isExecuting, executionLogs, graphState, executeFlow, clearLogs }.
+
+    onConnect(params):
+      - Adds new edge with animated teal dashed styling + arrow marker.
+
+    handleMagicGenerate():
+      - Calls generateWorkflow(magicPrompt).
+      - Offsets all node positions by (+300, +150) for canvas centering.
+      - Stores initialState on the root node's data so the executor can find it.
+      - Styles all edges consistently.
+      - Fits view with padding after 100ms.
+
+    handleBlankAgent():
+      - Creates a single AI_AGENT node at (300, 150).
+      - Pre-fills stateContract: { inputKeys: [], outputKeys: ['result'] }.
+
+    handleExecuteFlow():
+      - Sets isTesting = true, calls executeFlow().
+
+    downloadOutput(content, filename):
+      - Creates a Blob, generates Object URL, triggers <a> download, cleans up.
+
+    handleClear():
+      - Empties nodes, edges, and execution logs.
+
+    LAYOUT:
+      - LEFT SIDEBAR (w-64):
+        - Title: "State Graph Builder".
+        - Service Status panel (Google Docs, Gmail, Calendar indicators).
+        - Nav: Graph View (active), Execution Hub.
+        - Info box: "Each node reads/writes to a shared state object."
+      - MAIN AREA:
+        - SPLASH (when no nodes): Text prompt input + "Browse Templates" / "Blank Node" buttons.
+        - HEADER: "State Engine" badge + Clear + "Run Flow" button.
+        - CANVAS: ReactFlow with Background grid + Controls.
+        - EXECUTION MONITOR (bottom-right, slides in when isTesting).
+        - NODE INSPECTOR (top-right, when a node is selected):
+          - Editable: label, description.
+          - Read-only: State Contract (Reads, Writes, Reducer).
+          - Last Output (if available).
+
+src/features/workflow/components/ExecutionMonitor.tsx
+────────────────────────────────────────────────────
+Purpose: Floating panel showing live execution state and results.
+
+  StateTree({ state, label }):
+    - Collapsible JSON tree for inspecting state snapshots.
+    - Filters out __metadata.
+    - Toggle open/closed with chevron icons.
+
+  ExecutionMonitor({ isVisible, isExecuting, executionLogs, graphState, onClose, onDownload }):
+    - HEADER:
+      - Title: "State Graph Monitor".
+      - Status badge from graphState.__metadata.status (COMPLETED/FAILED/RUNNING).
+    - LOG ENTRIES (per executionLogs item):
+      - Timestamp + node name + "COMPLETE" badge.
+      - Output as formatted JSON in a code block.
+      - Collapsible StateTree showing state after this node.
+      - "Export output" download button.
+    - FOOTER:
+      - "Executing next node..." indicator while running.
+      - FINAL GRAPH STATE section after completion:
+        Full state (minus __metadata) as formatted JSON.
+
+
+================================================================================
+7. END-TO-END DATA FLOW
+================================================================================
+
+  USER PROMPT
+       │
+       ▼
+  generateWorkflow(prompt)           ← Gemini 2.5 Flash
+       │
+       ▼
+  Workflow { nodes[], edges[], initialState }
+       │
+       ▼
+  WorkflowCanvas stores nodes/edges in React Flow state
+       │
+       ▼
+  User clicks "Run Flow"
+       │
+       ▼
+  executeFlow()
+       │
+       ├── 1. Initialize GraphState = { ...initialState, __metadata }
+       │
+       ├── 2. Topological sort (Kahn's algorithm)
+       │
+       ├── 3. For each node in order:
+       │       │
+       │       ├── READ:  inputSlice = pick(state, stateContract.inputKeys)
+       │       │
+       │       ├── CHECK: Does node have toolId + toolAction?
+       │       │          YES → Lookup tool in registry → call action.execute(inputSlice)
+       │       │          NO  → CALL: executeNodeAction(label, description, inputSlice, outputKeys)
+       │       │                  │
+       │       │                  ▼
+       │       │          Gemini 2.5 Flash → structured JSON { key: value, ... }
+       │       │
+       │       ├── WRITE: state = mergeIntoState(state, output, reducer)
+       │       │
+       │       └── LOG:   { node, time, output, stateSnapshot }
+       │
+       └── 4. Final state → status: 'completed'
+                │
+                ▼
+          ExecutionMonitor shows logs + state diffs + final state
+
+
+================================================================================
+8. CENTRALIZED TOOLS SYSTEM
+================================================================================
+
+src/features/tools/types.ts
+───────────────────────────
+Purpose: Type definitions for the plug-and-play tools system.
+
+  Tool:
+    - id, name, description, icon, color, scopes.
+    - actions: ToolAction[]     → capabilities this tool provides.
+    - isAuthenticated()         → checks localStorage for a valid, non-expired token.
+    - authenticate()            → triggers OAuth popup flow.
+    - disconnect()              → revokes token and clears localStorage.
+
+  ToolAction:
+    - name: string              → e.g. 'send_email'.
+    - description: string       → human-readable description for AI prompt.
+    - inputKeys: string[]       → state keys this action reads.
+    - outputKeys: string[]      → state keys this action writes.
+    - execute(input)            → calls the external API and returns output.
+
+  ToolAuth:
+    - toolId, accessToken, expiresAt (epoch ms), scopes[].
+
+  ToolStatus:
+    - Simplified view for UI (id, name, icon, color, authenticated, actions).
+
+src/features/tools/toolRegistry.ts
+──────────────────────────────────
+Purpose: Central registry for all tools + localStorage token persistence.
+
+  registerTool(tool):        Add a tool to the in-memory registry.
+  getTool(id):               Lookup by ID.
+  getAllTools():              List all registered tools.
+  getAuthenticatedTools():   Filter to tools where isAuthenticated() is true.
+  getToolStatuses():         Map all tools to ToolStatus[] for UI display.
+
+  saveToolAuth(auth):        Persist ToolAuth to localStorage (key: tool_auth_{id}).
+  loadToolAuth(toolId):      Load + validate expiry. Returns null if expired.
+  clearToolAuth(toolId):     Remove token from localStorage.
+
+src/features/tools/connectors/gmail.ts
+──────────────────────────────────────
+Purpose: Gmail connector — OAuth via GIS, email skill with validation/retry/errors.
+
+  GmailApiError:
+    - Typed error subclass: auth | rate_limit | invalid_recipient | too_large | generic.
+    - classifyError(status, body) maps HTTP codes to error types.
+
+  gmailApiFetch(endpoint, options):
+    - 30s AbortController timeout.
+    - Throws typed GmailApiError on non-2xx.
+
+  withRetry<T>(fn):
+    - Max 3 retries, exponential backoff (1s, 2s, 4s).
+    - Only retries rate_limit and generic errors.
+
+  Validation:
+    - isValidEmail()      regex ^[^\s@]+@[^\s@]+\.[^\s@]+$
+    - validateRecipients() returns list of invalid entries from comma-separated string.
+    - validateEmailData()  checks to, body required; validates cc/bcc format.
+    - generateSubjectFromBody() auto-generates subject from first sentence or 60 chars.
+
+  encodeEmail(to, subject, body, cc?, bcc?, replyTo?):
+    - Builds RFC 2822 with optional Cc/Bcc/Reply-To headers → base64url.
+
+  sendEmailAction (skill-enhanced):
+    - INPUT:  to, subject, body (required), cc, bcc, reply_to (optional).
+    - OUTPUT: email_sent_id, email_status, sent_to, sent_at.
+    - Flow: check connector → auto-generate subject → validate → send with retry.
+    - Error responses: user-friendly per error type.
+
+  readInboxAction:
+    - INPUT:  query?, max_results? (default 5, max 20).
+    - OUTPUT: emails (JSON array), email_count.
+
+  composeAndSendAction (NEW):
+    - INPUT:  email_draft (JSON) OR individual to/subject/body + cc/bcc/reply_to + context.
+    - OUTPUT: email_sent_id, email_status, sent_to, sent_at.
+    - Extracts from structured email_draft or falls back to individual fields.
+    - Delegates to sendEmailAction after merge.
+
+  Self-registers via registerTool(gmailTool) on import.
+
+src/features/tools/connectors/index.ts
+──────────────────────────────────────
+Purpose: Barrel import — importing this ensures all connectors self-register.
+
+src/features/tools/useTools.ts
+──────────────────────────────
+Purpose: React hook for managing tools in the UI.
+
+  useTools():
+    - RETURNS: { toolStatuses, authInProgress, authenticate, disconnect, refreshStatuses }.
+    - authenticate(toolId): triggers OAuth, updates statuses on success.
+    - disconnect(toolId): clears token, updates statuses.
+    - Imports connectors barrel to ensure registration.
+
+
+================================================================================
+9. ENV VARS
+================================================================================
+
+  GEMINI_API_KEY              → Gemini AI API key (used by geminiService.ts).
+  VITE_GOOGLE_CLIENT_ID       → Google OAuth 2.0 Client ID (used by Gmail connector).
+                                Must be created in Google Cloud Console with
+                                http://localhost:3233 as an authorized JS origin.

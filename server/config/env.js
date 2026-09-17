@@ -79,8 +79,37 @@ const schema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: intWithDefault(3234, { min: 1, max: 65535 }),
 
-    // ---- Client origin allowlist (enforced in Task 3) ----
+    // ---- Client origin allowlist ----
     CORS_ALLOWED_ORIGINS: csv('http://localhost:3233,http://127.0.0.1:3233'),
+
+    // ---- Authentication ----
+    /**
+     * Auth may only be disabled for local development. Production startup fails
+     * if this is false, because every route below it touches real accounts,
+     * real mailboxes, and real saved data.
+     */
+    AUTH_ENABLED: booleanish(true),
+    /** Shared password for the single-operator deployment. */
+    APP_PASSWORD: optionalSecret(),
+    /** HMAC key for session cookies. Rotating it invalidates all sessions. */
+    SESSION_SECRET: optionalSecret(),
+    SESSION_TTL_HOURS: intWithDefault(12, { min: 1, max: 720 }),
+    /** Send the Secure cookie flag. Required in production; off for plain-HTTP dev. */
+    SESSION_COOKIE_SECURE: booleanish(undefined),
+
+    // ---- Rate limiting (per IP) ----
+    RATE_LIMIT_WINDOW_MS: intWithDefault(60_000, { min: 1_000, max: 3_600_000 }),
+    /** General API budget per window. */
+    RATE_LIMIT_MAX: intWithDefault(300, { min: 1, max: 100_000 }),
+    /** AI calls cost money and tokens, so they get a tighter budget. */
+    RATE_LIMIT_AI_MAX: intWithDefault(30, { min: 1, max: 10_000 }),
+    /** Login attempts are throttled hard to slow credential guessing. */
+    RATE_LIMIT_AUTH_MAX: intWithDefault(10, { min: 1, max: 1_000 }),
+    /** Outbound message sends are throttled to limit spam blast radius. */
+    RATE_LIMIT_SEND_MAX: intWithDefault(20, { min: 1, max: 10_000 }),
+
+    // ---- Logging ----
+    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
     // ---- AI provider selection ----
     AI_PROVIDER: z.enum(['openrouter', 'gemini', 'ollama']).default('openrouter'),
@@ -123,7 +152,62 @@ const schema = z
           `Set ${required}, or change AI_PROVIDER to a provider you have configured.`,
       });
     }
-  });
+
+    // Auth must never be off in production: these routes send email, post
+    // messages, and read saved workflows.
+    if (!cfg.AUTH_ENABLED && cfg.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_ENABLED'],
+        message:
+          'AUTH_ENABLED=false is not allowed when NODE_ENV=production. ' +
+          'An unauthenticated deployment exposes connector actions and saved workflows to anyone.',
+      });
+    }
+
+    if (cfg.AUTH_ENABLED) {
+      if (!cfg.APP_PASSWORD) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['APP_PASSWORD'],
+          message:
+            'APP_PASSWORD is required when AUTH_ENABLED is true. ' +
+            'Set a strong password, or set AUTH_ENABLED=false for local development only.',
+        });
+      } else if (cfg.APP_PASSWORD.length < 12) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['APP_PASSWORD'],
+          message: 'APP_PASSWORD must be at least 12 characters.',
+        });
+      }
+
+      if (!cfg.SESSION_SECRET) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SESSION_SECRET'],
+          message:
+            'SESSION_SECRET is required when AUTH_ENABLED is true. ' +
+            'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+        });
+      } else if (cfg.SESSION_SECRET.length < 32) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SESSION_SECRET'],
+          message: 'SESSION_SECRET must be at least 32 characters of high-entropy material.',
+        });
+      }
+    }
+  })
+  .transform((cfg) => ({
+    ...cfg,
+    // Secure cookies are mandatory in production and default off elsewhere so
+    // plain-HTTP local development still works.
+    SESSION_COOKIE_SECURE:
+      cfg.SESSION_COOKIE_SECURE === undefined
+        ? cfg.NODE_ENV === 'production'
+        : cfg.SESSION_COOKIE_SECURE,
+  }));
 
 const parsed = schema.safeParse(process.env);
 

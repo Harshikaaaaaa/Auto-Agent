@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { publicAiConfig } from '../config/env.js';
+import { logger } from '../lib/logger.js';
 import {
   ProviderError,
   callProviderForJson,
@@ -174,8 +175,7 @@ function handle(fn) {
           message: err.message,
         });
       }
-      // eslint-disable-next-line no-console
-      console.error('[ai] Unexpected route error:', err);
+      logger.error({ err, path: req.originalUrl }, 'unexpected AI route error');
       return res.status(500).json({
         error: 'internal_error',
         message: 'The AI service failed to handle this request.',

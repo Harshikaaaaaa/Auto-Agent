@@ -1,6 +1,7 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import express from 'express';
-import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import { z } from 'zod';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
@@ -9,6 +10,16 @@ import { setupWorkflowRoutes } from './workflowHandler.js';
 import { env, publicAiConfig } from './config/env.js';
 import { setupAiRoutes } from './ai/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
+import { logger } from './lib/logger.js';
+import {
+    buildCors,
+    buildHelmet,
+    buildLimiters,
+    buildRequestLogger,
+    errorHandler,
+} from './middleware/security.js';
+import { requireSession, setupAuthRoutes } from './auth/session.js';
+import { AI_PATHS, WHATSAPP_PATHS, WORKFLOW_PATHS } from './config/protectedPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,8 +27,39 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = env.PORT;
 
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+// Trust exactly one proxy hop so req.ip is the real client behind a load
+// balancer. A blanket `true` would let a client spoof X-Forwarded-For and
+// defeat rate limiting.
+app.set('trust proxy', 1);
+
+const limiters = buildLimiters();
+
+app.use(buildRequestLogger());
+app.use(buildHelmet());
+app.use(buildCors());
+app.use(cookieParser());
+app.use(express.json({ limit: '1mb' }));
+
+// ---- Public endpoints (no session required) ----
+
+/** Liveness: the process is up. Intentionally cheap and unauthenticated. */
+app.get('/healthz', (_req, res) => {
+    res.json({ status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
+});
+
+/** Readiness: safe to receive traffic. Reports no configuration details. */
+app.get('/readyz', (_req, res) => {
+    res.json({ status: 'ready' });
+});
+
+setupAuthRoutes(app, { loginLimiter: limiters.auth });
+
+// ---- Protected endpoints ----
+// Everything below requires a session. These routes read saved workflows, spend
+// model credits, and send real messages, so none of them may be anonymous.
+
+app.use(AI_PATHS, limiters.ai, requireSession);
+app.use(WORKFLOW_PATHS, limiters.general, requireSession);
 
 // AI backend-for-frontend. Provider credentials live only on this side.
 setupAiRoutes(app);
@@ -37,18 +79,29 @@ async function reportAiConfiguration() {
   const configured = Object.entries(cfg.providers)
     .filter(([, v]) => v.configured)
     .map(([k]) => k);
-  console.log(
-    `[ai] provider=${cfg.defaultProvider} configured=[${configured.join(', ')}] ` +
-      `override=${cfg.allowProviderOverride ? 'allowed' : 'locked'}`,
+  logger.info(
+    {
+      provider: cfg.defaultProvider,
+      configured,
+      override: cfg.allowProviderOverride ? 'allowed' : 'locked',
+    },
+    'AI configuration',
   );
 
   const probe = await probeConfiguredModel();
   if (probe.ok) {
-    console.log(`[ai] model check OK: ${probe.provider}/${probe.model} (${probe.detail})`);
+    logger.info({ provider: probe.provider, model: probe.model }, 'model check passed');
   } else {
-    console.warn(
-      `[ai] MODEL CHECK FAILED: ${probe.provider}/${probe.model} — ${probe.detail}. ` +
-        `AI features will fail until this is fixed. See GET /api/ai/health.`,
+    logger.warn(
+      { provider: probe.provider, model: probe.model, detail: probe.detail },
+      'MODEL CHECK FAILED — AI features will fail until this is fixed (see GET /api/ai/health)',
+    );
+  }
+
+  if (!env.AUTH_ENABLED) {
+    logger.warn(
+      'AUTH_ENABLED=false — every API route is unauthenticated. ' +
+        'This is for local development only and is rejected in production.',
     );
   }
 }
@@ -66,6 +119,45 @@ if (!fs.existsSync(AUTH_DIR)) {
 
 // Simple in-memory store for recent incoming messages demonstration
 const recentMessages = [];
+
+/**
+ * Outbound message payload.
+ *
+ * `mediaUrl` is restricted to http/https. A local path, `file://`, or any other
+ * scheme is rejected outright — the old handler resolved such values against the
+ * filesystem and returned their contents.
+ */
+const sendMessageSchema = z
+    .object({
+        to: z.string().min(1).max(64),
+        text: z.string().max(4096).optional(),
+        mediaUrl: z
+            .string()
+            .max(2048)
+            .refine((value) => {
+                let parsed;
+                try {
+                    parsed = new URL(value);
+                } catch {
+                    return false;
+                }
+                return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            }, 'mediaUrl must be an absolute http(s) URL')
+            .optional(),
+        mediaType: z.string().max(64).optional(),
+    })
+    .refine((body) => Boolean(body.text) || Boolean(body.mediaUrl), {
+        message: 'Provide "text", "mediaUrl", or both.',
+    });
+
+/** Host only, for logs: a full media URL can carry a signed token in the query. */
+function safeHost(url) {
+    try {
+        return new URL(url).host;
+    } catch {
+        return 'invalid-url';
+    }
+}
 
 async function startServer() {
     // Shared state
@@ -88,12 +180,14 @@ async function startServer() {
                     }
                 });
                 QRCode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
-                    if (!err) console.log(url);
+                    // Printed raw: an ASCII QR code is unreadable through a
+                    // structured logger, and operators scan this from the console.
+                    if (!err) process.stdout.write(`${url}\n`);
                 });
             }
             if (connection === 'close') {
                 const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                console.log('Connection closed, reconnect:', shouldReconnect);
+                logger.warn({ shouldReconnect }, 'WhatsApp connection closed');
                 connectionStatus = 'disconnected';
                 lastDisconnectReason = lastDisconnect?.error?.message;
 
@@ -104,7 +198,7 @@ async function startServer() {
                     setTimeout(startSock, 1000);
                 }
             } else if (connection === 'open') {
-                console.log('WhatsApp Connected!');
+                logger.info('WhatsApp connected');
                 connectionStatus = 'connected';
                 qrCodeData = null;
             }
@@ -140,7 +234,12 @@ async function startServer() {
 
     await startSock();
 
-    // Endpoints
+    // ---- WhatsApp bridge endpoints ----
+    // All of these are session-gated. Before this, anyone who could reach the
+    // port could send messages from the linked account (/send), read recent
+    // messages (/messages), or wipe its credentials (/disconnect).
+    app.use(WHATSAPP_PATHS, limiters.general, requireSession);
+
     app.get('/status', (req, res) => res.json({
         status: connectionStatus,
         user: sock?.user,
@@ -241,12 +340,26 @@ async function startServer() {
         res.json({ qr: qrCodeData });
     });
 
-    app.post('/send', async (req, res) => {
-        if (connectionStatus !== 'connected') return res.status(503).json({ error: 'Not connected' });
-        const { to, text, mediaUrl, mediaType } = req.body;
+    app.post('/send', limiters.send, async (req, res) => {
+        // Validate before checking connectivity: a malformed or hostile payload
+        // should be rejected on its own merits, not incidentally masked by the
+        // bridge happening to be offline.
+        const parsed = sendMessageSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'invalid_request',
+                message: 'Provide "to" plus "text" and/or an http(s) "mediaUrl".',
+                issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+            });
+        }
+        const { to, text, mediaUrl, mediaType } = parsed.data;
 
-        // Require 'to' and at least 'text' OR 'mediaUrl'
-        if (!to || (!text && !mediaUrl)) return res.status(400).json({ error: 'Missing to/text/mediaUrl' });
+        if (connectionStatus !== 'connected') {
+            return res.status(503).json({
+                error: 'bridge_not_connected',
+                message: 'The WhatsApp bridge is not connected.',
+            });
+        }
 
         try {
             const jid = to.includes('@s.whatsapp.net') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
@@ -259,29 +372,17 @@ async function startServer() {
                 const typeMap = { image: 'image', video: 'video', audio: 'audio', document: 'document' };
                 const type = typeMap[rawType] || 'image';
 
-                console.log(`[WhatsApp] Sending media — type: ${type}, url: ${mediaUrl}`);
+                logger.info({ type, host: safeHost(mediaUrl) }, 'sending WhatsApp media');
 
-                // Determine media source: local file or URL
-                const trimmedUrl = mediaUrl.trim();
-                let mediaSource;
-                if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
-                    mediaSource = { url: trimmedUrl };
-                } else {
-                    // Local file path — read into buffer
-                    const fs = require('fs');
-                    const path = require('path');
-                    const resolvedPath = path.resolve(trimmedUrl);
-                    if (!fs.existsSync(resolvedPath)) {
-                        return res.status(400).json({ error: `File not found: ${resolvedPath}` });
-                    }
-                    mediaSource = fs.readFileSync(resolvedPath);
-                }
-
-                const content = {
-                    [type]: mediaSource,
-                    caption: text || ''
-                };
-                await sock.sendMessage(jid, content);
+                // Only remote http(s) media is accepted.
+                //
+                // The previous implementation fell back to treating mediaUrl as a
+                // filesystem path and read it with path.resolve + readFileSync,
+                // which let any caller exfiltrate arbitrary server files. It also
+                // used CommonJS require() inside this ES module, so that branch
+                // threw at runtime regardless. Both are gone; the schema rejects
+                // anything that is not an http(s) URL.
+                await sock.sendMessage(jid, { [type]: { url: mediaUrl }, caption: text || '' });
             } else {
                 // Send text only
                 await sock.sendMessage(jid, { text });
@@ -289,8 +390,8 @@ async function startServer() {
 
             res.json({ success: true, to: jid });
         } catch (e) {
-            console.error('Send failed:', e);
-            res.status(500).json({ error: e.message });
+            logger.error({ err: e }, 'WhatsApp send failed');
+            res.status(500).json({ error: 'send_failed', message: 'Could not send the message.' });
         }
     });
 
@@ -316,8 +417,12 @@ async function startServer() {
         }
     });
 
+    // Terminal error handler. Registered last so it sees errors from every
+    // route and from CORS rejections.
+    app.use(errorHandler);
+
     app.listen(PORT, () => {
-        console.log(`AutoAgent server running on http://localhost:${PORT}`);
+        logger.info({ port: PORT, authEnabled: env.AUTH_ENABLED }, 'AutoAgent server listening');
         void reportAiConfiguration();
     });
 }

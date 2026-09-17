@@ -8,11 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const originalEnv = { ...process.env };
 
 /** Load a fresh copy of the env module under a controlled environment. */
+/** Valid auth config, so tests can focus on whatever they actually assert. */
+const VALID_AUTH = {
+  APP_PASSWORD: 'test-operator-password',
+  SESSION_SECRET: 'a'.repeat(64),
+};
+
 async function loadEnv(overrides) {
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, {
     // Never read the developer's real .env files during tests.
     AUTOAGENT_SKIP_ENV_FILES: '1',
+    ...VALID_AUTH,
     ...overrides,
   });
   vi.resetModules();

@@ -55,6 +55,9 @@ beforeAll(async () => {
     AUTOAGENT_SKIP_ENV_FILES: '1',
     AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: TEST_KEY,
+    APP_PASSWORD: 'test-operator-password',
+    SESSION_SECRET: 'a'.repeat(64),
+    LOG_LEVEL: 'silent',
   });
   vi.resetModules();
   ({ setupAiRoutes } = await import('../routes.js'));

@@ -16,6 +16,10 @@ async function loadProviders(overrides = {}) {
     AUTOAGENT_SKIP_ENV_FILES: '1',
     AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: REAL_KEY,
+    // Auth config is required for the env module to validate; these tests are
+    // about provider behaviour, not auth.
+    APP_PASSWORD: 'test-operator-password',
+    SESSION_SECRET: 'a'.repeat(64),
     ...overrides,
   });
   vi.resetModules();

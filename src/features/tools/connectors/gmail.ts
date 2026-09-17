@@ -1,4 +1,4 @@
-import { Tool, ToolAction, ToolAuth } from '../types';
+import { ToolActionDefinition, ToolAuth, ToolDefinition } from '../types';
 import { registerTool, saveToolAuth, loadToolAuth, clearToolAuth, silentRefreshGoogleToken } from '../toolRegistry';
 
 // ==================== GMAIL CONSTANTS ====================
@@ -258,11 +258,34 @@ function encodeEmail(
  * - Reads:  to, subject, body, cc?, bcc?, reply_to?
  * - Writes: email_sent_id, email_status, sent_to, sent_at
  */
-const sendEmailAction: ToolAction = {
+const sendEmailAction: ToolActionDefinition = {
     name: 'send_email',
-    description: 'Send an email via Gmail with validation and retry. Reads: to, subject, body (required), cc, bcc, reply_to (optional). Writes: email_sent_id, email_status, sent_to, sent_at.',
-    inputKeys: ['to', 'subject', 'body', 'cc', 'bcc', 'reply_to'],
-    outputKeys: ['email_sent_id', 'email_status', 'sent_to', 'sent_at'],
+    description: 'Send an email via Gmail with validation and retry.',
+    capabilities: ['email.send'],
+    // Once sent, an email cannot be recalled, so this always needs approval.
+    sideEffect: 'irreversible',
+    requiresAuth: true,
+    costProfile: { latencyMs: 900, cost: 1, reliability: 9 },
+    inputSchema: {
+        to: {
+            type: 'string',
+            description: 'Recipient email address.',
+            required: true,
+            external: true,
+            format: 'email'
+        },
+        subject: { type: 'string', description: 'Email subject line.', required: true },
+        body: { type: 'string', description: 'Email body text.', required: true },
+        cc: { type: 'string', description: 'Carbon-copy recipients, comma separated.', format: 'email' },
+        bcc: { type: 'string', description: 'Blind-copy recipients, comma separated.', format: 'email' },
+        reply_to: { type: 'string', description: 'Reply-To address.', format: 'email' }
+    },
+    outputSchema: {
+        email_sent_id: { type: 'string', description: 'Gmail id of the sent message.' },
+        email_status: { type: 'string', description: 'Outcome of the send attempt.' },
+        sent_to: { type: 'string', description: 'Address the message went to.' },
+        sent_at: { type: 'string', description: 'When it was sent.', format: 'date-time' }
+    },
     execute: async (input) => {
         // Step 1: Check connector status
         if (!isGmailAvailable()) {
@@ -363,11 +386,25 @@ const sendEmailAction: ToolAction = {
  * - Reads:  query?, max_results?
  * - Writes: emails, email_count
  */
-const readInboxAction: ToolAction = {
+const readInboxAction: ToolActionDefinition = {
     name: 'read_inbox',
-    description: 'Read emails from Gmail inbox. Reads: query (optional search filter), max_results (optional, default 5). Writes: emails (JSON array of messages), email_count.',
-    inputKeys: ['query', 'max_results'],
-    outputKeys: ['emails', 'email_count'],
+    description: 'Read messages from the Gmail inbox, optionally filtered by a search query.',
+    capabilities: ['email.read'],
+    sideEffect: 'read',
+    requiresAuth: true,
+    costProfile: { latencyMs: 1200, cost: 1, reliability: 9 },
+    inputSchema: {
+        query: { type: 'string', description: 'Gmail search filter, for example "is:unread".' },
+        max_results: { type: 'number', description: 'How many messages to read. Defaults to 5.' }
+    },
+    outputSchema: {
+        emails: {
+            type: 'array',
+            description: 'Messages that matched.',
+            items: { type: 'object', description: 'One message with id, from, subject and snippet.' }
+        },
+        email_count: { type: 'number', description: 'How many messages were returned.' }
+    },
     execute: async (input) => {
         if (!isGmailAvailable()) {
             return {
@@ -437,11 +474,45 @@ const readInboxAction: ToolAction = {
  * - Reads:  email_draft OR (to, subject, body), context?
  * - Writes: email_sent_id, email_status, sent_to, sent_at
  */
-const composeAndSendAction: ToolAction = {
+const composeAndSendAction: ToolActionDefinition = {
     name: 'compose_and_send',
-    description: 'Smart email composer: extracts email parameters from upstream context or structured email_draft, validates, and sends via Gmail. Reads: email_draft (JSON with to/subject/body) or individual to, subject, body fields. Writes: email_sent_id, email_status, sent_to, sent_at.',
-    inputKeys: ['email_draft', 'to', 'subject', 'body', 'cc', 'bcc', 'reply_to', 'context', 'email_to', 'email_subject', 'email_body', 'recipient', 'message', 'content', 'email_recipient', 'robot_story_content', 'story', 'story_content'],
-    outputKeys: ['email_sent_id', 'email_status', 'sent_to', 'sent_at'],
+    description:
+        'Assemble an email from upstream workflow state (or a structured email_draft), then validate and send it. Use this when an earlier step produced the content.',
+    capabilities: ['email.send'],
+    sideEffect: 'irreversible',
+    requiresAuth: true,
+    costProfile: { latencyMs: 1000, cost: 1, reliability: 8 },
+    // This action deliberately accepts many aliases because it collects content
+    // produced by earlier steps, whose key names vary by workflow.
+    inputSchema: {
+        email_draft: {
+            type: 'object',
+            description: 'Structured draft with to, subject and body. Takes precedence when present.'
+        },
+        to: { type: 'string', description: 'Recipient address.', external: true, format: 'email' },
+        subject: { type: 'string', description: 'Subject line.' },
+        body: { type: 'string', description: 'Body text.' },
+        cc: { type: 'string', description: 'Carbon-copy recipients.', format: 'email' },
+        bcc: { type: 'string', description: 'Blind-copy recipients.', format: 'email' },
+        reply_to: { type: 'string', description: 'Reply-To address.', format: 'email' },
+        context: { type: 'string', description: 'Free-form upstream context to draw content from.' },
+        email_to: { type: 'string', description: 'Alias for to.', format: 'email' },
+        email_subject: { type: 'string', description: 'Alias for subject.' },
+        email_body: { type: 'string', description: 'Alias for body.' },
+        recipient: { type: 'string', description: 'Alias for to.', format: 'email' },
+        message: { type: 'string', description: 'Alias for body.' },
+        content: { type: 'string', description: 'Alias for body.' },
+        email_recipient: { type: 'string', description: 'Alias for to.', format: 'email' },
+        robot_story_content: { type: 'string', description: 'Upstream content alias.' },
+        story: { type: 'string', description: 'Upstream content alias.' },
+        story_content: { type: 'string', description: 'Upstream content alias.' }
+    },
+    outputSchema: {
+        email_sent_id: { type: 'string', description: 'Gmail id of the sent message.' },
+        email_status: { type: 'string', description: 'Outcome of the send attempt.' },
+        sent_to: { type: 'string', description: 'Address the message went to.' },
+        sent_at: { type: 'string', description: 'When it was sent.', format: 'date-time' }
+    },
     execute: async (input) => {
         // Extract email data — prefer structured email_draft, fall back to individual keys
         let emailData: Record<string, any> = {};
@@ -490,12 +561,14 @@ declare global {
     }
 }
 
-const gmailTool: Tool = {
+const gmailTool: ToolDefinition = {
     id: GMAIL_TOOL_ID,
     name: 'Gmail',
-    description: 'Send and read emails via Gmail API with validation, retry, and context-aware composition',
+    description: 'Send and read emails via the Gmail API, with validation, retry, and context-aware composition.',
     icon: 'Mail',
     color: '#EA4335',
+    category: 'communication',
+    costProfile: { latencyMs: 1000, cost: 1, reliability: 9 },
     scopes: GMAIL_SCOPES,
     actions: [sendEmailAction, readInboxAction, composeAndSendAction],
 

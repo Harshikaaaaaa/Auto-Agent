@@ -1,5 +1,11 @@
-import { Tool, ToolAction } from './types';
-import { registerTool } from './toolRegistry';
+import {
+    FieldSchemaMap,
+    SideEffect,
+    Tool,
+    ToolActionDefinition,
+    ToolDefinition
+} from './types';
+import { getTool, registerTool } from './toolRegistry';
 import { requestConnectorDefinition } from '@features/ai/services/aiClient';
 
 
@@ -22,13 +28,45 @@ export interface GeneratedConnectorConfig {
 /**
  * Dynamically create a connector based on a specification
  */
+/**
+ * Classify a generated action by its HTTP method.
+ *
+ * A generated connector has no declared safety class, so it is inferred
+ * conservatively: anything that is not a plain read is treated as at least a
+ * write, and DELETE is treated as irreversible so it gates on approval.
+ */
+function inferSideEffect(method: string): SideEffect {
+    const verb = (method || 'GET').toUpperCase();
+    if (verb === 'GET' || verb === 'HEAD') return 'read';
+    if (verb === 'DELETE') return 'irreversible';
+    return 'write';
+}
+
+/** Build a minimal schema from a bare key list. */
+function schemaFromKeys(keys: string[], role: 'input' | 'output'): FieldSchemaMap {
+    return Object.fromEntries(
+        (keys ?? []).map(key => [
+            key,
+            {
+                type: 'string' as const,
+                description: `Generated connector ${role} field "${key}".`
+            }
+        ])
+    );
+}
+
 export const createDynamicConnector = (config: GeneratedConnectorConfig): Tool => {
     const toolId = config.id;
-    const actions: ToolAction[] = config.actions.map(action => ({
+    const actions: ToolActionDefinition[] = config.actions.map(action => ({
         name: action.name,
         description: action.description,
-        inputKeys: action.inputKeys,
-        outputKeys: action.outputKeys,
+        // A generated connector's purpose is not known to the taxonomy, so it
+        // advertises no capability and the planner will not auto-select it.
+        capabilities: [],
+        sideEffect: inferSideEffect(action.method),
+        requiresAuth: config.authType !== 'none',
+        inputSchema: schemaFromKeys(action.inputKeys, 'input'),
+        outputSchema: schemaFromKeys(action.outputKeys, 'output'),
         execute: async (input: Record<string, any>) => {
             try {
                 const url = `${config.apiEndpoint}${action.endpoint}`;
@@ -55,12 +93,15 @@ export const createDynamicConnector = (config: GeneratedConnectorConfig): Tool =
         }
     }));
 
-    const tool: Tool = {
+    const tool: ToolDefinition = {
         id: toolId,
         name: config.name,
         description: config.description,
         icon: 'Zap',
         color: '#A78BFA',
+        category: 'generated',
+        // Unproven code paths, so ranked below the hand-written connectors.
+        costProfile: { latencyMs: 1500, cost: 1, reliability: 4 },
         scopes: [],
         actions,
         isAuthenticated: () => {
@@ -78,7 +119,9 @@ export const createDynamicConnector = (config: GeneratedConnectorConfig): Tool =
     };
 
     registerTool(tool);
-    return tool;
+    // registerTool derives inputKeys/outputKeys, so read the registered copy back
+    // rather than returning the pre-normalised definition.
+    return getTool(toolId) as Tool;
 };
 
 /**

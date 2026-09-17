@@ -1,4 +1,4 @@
-import { Tool, ToolAction } from '../types';
+import { ToolActionDefinition, ToolDefinition } from '../types';
 import { registerTool, saveToolAuth, loadToolAuth, clearToolAuth, silentRefreshGoogleToken } from '../toolRegistry';
 
 const TOOL_ID = 'google_drive';
@@ -29,11 +29,25 @@ async function driveApi(path: string, method = 'GET', body?: any): Promise<any> 
 
 // ==================== ACTIONS ====================
 
-const listFiles: ToolAction = {
+const listFiles: ToolActionDefinition = {
     name: 'list_files',
-    description: 'List files in Google Drive, optionally filtered by query',
-    inputKeys: ['query', 'pageSize'],
-    outputKeys: ['files', 'count'],
+    description: 'List files in Google Drive, optionally filtered by a Drive query.',
+    capabilities: ['file.list'],
+    sideEffect: 'read',
+    requiresAuth: true,
+    costProfile: { latencyMs: 1000, cost: 0, reliability: 9 },
+    inputSchema: {
+        query: { type: 'string', description: 'Drive query, for example "name contains \'report\'".' },
+        pageSize: { type: 'number', description: 'How many files to return.' }
+    },
+    outputSchema: {
+        files: {
+            type: 'array',
+            description: 'Matching files.',
+            items: { type: 'object', description: 'One file with id, name and mimeType.' }
+        },
+        count: { type: 'number', description: 'How many files were returned.' }
+    },
     execute: async (input) => {
         const q = input.query ? `&q=${encodeURIComponent(input.query)}` : '';
         const size = input.pageSize || 20;
@@ -42,11 +56,28 @@ const listFiles: ToolAction = {
     }
 };
 
-const uploadFile: ToolAction = {
+const uploadFile: ToolActionDefinition = {
     name: 'upload_file',
-    description: 'Upload text content as a file to Google Drive',
-    inputKeys: ['fileName', 'content', 'mimeType'],
-    outputKeys: ['id', 'name', 'webViewLink'],
+    description: 'Upload text content as a new file in Google Drive.',
+    capabilities: ['file.upload'],
+    // Creates a new file rather than destroying one, and it can be deleted after.
+    sideEffect: 'write',
+    requiresAuth: true,
+    costProfile: { latencyMs: 1400, cost: 0, reliability: 9 },
+    inputSchema: {
+        fileName: { type: 'string', description: 'Name to give the file.', required: true },
+        content: { type: 'string', description: 'Text content of the file.', required: true },
+        mimeType: {
+            type: 'string',
+            description: 'MIME type. Defaults to text/plain.',
+            format: 'mime-type'
+        }
+    },
+    outputSchema: {
+        id: { type: 'string', description: 'Drive id of the created file.' },
+        name: { type: 'string', description: 'Name of the created file.' },
+        webViewLink: { type: 'string', description: 'Link to open the file.', format: 'url' }
+    },
     execute: async (input) => {
         const token = getAccessToken();
         if (!token) throw new Error('Google Drive not authenticated');
@@ -66,11 +97,20 @@ const uploadFile: ToolAction = {
     }
 };
 
-const downloadFile: ToolAction = {
+const downloadFile: ToolActionDefinition = {
     name: 'download_file',
-    description: "Download a file's text content from Google Drive by file ID",
-    inputKeys: ['fileId'],
-    outputKeys: ['content', 'length'],
+    description: "Read a file's text content from Google Drive by its id.",
+    capabilities: ['file.download'],
+    sideEffect: 'read',
+    requiresAuth: true,
+    costProfile: { latencyMs: 1200, cost: 0, reliability: 9 },
+    inputSchema: {
+        fileId: { type: 'string', description: 'Drive id of the file.', required: true, external: true }
+    },
+    outputSchema: {
+        content: { type: 'string', description: 'Text content of the file.' },
+        length: { type: 'number', description: 'Length of the content in characters.' }
+    },
     execute: async (input) => {
         const token = getAccessToken();
         if (!token) throw new Error('Google Drive not authenticated');
@@ -87,12 +127,14 @@ const downloadFile: ToolAction = {
 
 // ==================== REGISTRATION ====================
 
-const googleDriveTool: Tool = {
+const googleDriveTool: ToolDefinition = {
     id: TOOL_ID,
     name: 'Google Drive',
-    description: 'List, upload, and download files from Google Drive',
+    description: 'List, upload, and download files in Google Drive.',
     icon: 'HardDrive',
     color: '#4285F4',
+    category: 'storage',
+    costProfile: { latencyMs: 1100, cost: 0, reliability: 9 },
     scopes: SCOPES,
     actions: [listFiles, uploadFile, downloadFile],
     isAuthenticated: isAvailable,

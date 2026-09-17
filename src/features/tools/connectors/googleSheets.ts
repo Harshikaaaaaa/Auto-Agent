@@ -1,4 +1,4 @@
-import { Tool, ToolAction, ToolAuth } from '../types';
+import { ToolActionDefinition, ToolAuth, ToolDefinition } from '../types';
 import { registerTool, saveToolAuth, loadToolAuth, clearToolAuth, silentRefreshGoogleToken } from '../toolRegistry';
 
 const TOOL_ID = 'google_sheets';
@@ -68,11 +68,30 @@ export async function ensureDefaultSpreadsheet(): Promise<string | null> {
 
 // ==================== ACTIONS ====================
 
-const readSheet: ToolAction = {
+const readSheet: ToolActionDefinition = {
     name: 'read_sheet',
-    description: 'Read cells from a Google Sheets spreadsheet by range',
-    inputKeys: ['spreadsheetId', 'range'],
-    outputKeys: ['rows', 'rowCount'],
+    description: 'Read cell values from a range of a Google Sheets spreadsheet.',
+    capabilities: ['spreadsheet.read'],
+    sideEffect: 'read',
+    requiresAuth: true,
+    costProfile: { latencyMs: 800, cost: 0, reliability: 9 },
+    inputSchema: {
+        spreadsheetId: {
+            type: 'string',
+            description: 'Id of the spreadsheet, from its URL.',
+            required: true,
+            external: true
+        },
+        range: { type: 'string', description: 'A1 range, for example "Sheet1!A1:D50".' }
+    },
+    outputSchema: {
+        rows: {
+            type: 'array',
+            description: 'Rows that were read.',
+            items: { type: 'array', description: 'One row of cell values.' }
+        },
+        rowCount: { type: 'number', description: 'How many rows were read.' }
+    },
     execute: async (input) => {
         const id = input.spreadsheetId || input.spreadsheet_id || input.sheet_id || await ensureDefaultSpreadsheet();
         const range = input.range || 'Sheet1!A1:Z100';
@@ -82,11 +101,35 @@ const readSheet: ToolAction = {
     }
 };
 
-const writeSheet: ToolAction = {
+const writeSheet: ToolActionDefinition = {
     name: 'write_sheet',
-    description: 'Write data to a specific range in a Google Sheets spreadsheet',
-    inputKeys: ['spreadsheetId', 'range', 'values'],
-    outputKeys: ['updatedRange', 'updatedRows', 'updatedCells'],
+    description:
+        'Overwrite a range of a Google Sheets spreadsheet with new values. Replaces whatever was there.',
+    capabilities: ['spreadsheet.write'],
+    // Overwrites existing cells, but a spreadsheet can be corrected afterwards.
+    sideEffect: 'write',
+    requiresAuth: true,
+    costProfile: { latencyMs: 900, cost: 0, reliability: 9 },
+    inputSchema: {
+        spreadsheetId: {
+            type: 'string',
+            description: 'Id of the spreadsheet, from its URL.',
+            required: true,
+            external: true
+        },
+        range: { type: 'string', description: 'A1 range to overwrite.', required: true },
+        values: {
+            type: 'array',
+            description: 'Rows to write.',
+            required: true,
+            items: { type: 'array', description: 'One row of cell values.' }
+        }
+    },
+    outputSchema: {
+        updatedRange: { type: 'string', description: 'Range that was written.' },
+        updatedRows: { type: 'number', description: 'How many rows changed.' },
+        updatedCells: { type: 'number', description: 'How many cells changed.' }
+    },
     execute: async (input) => {
         const id = input.spreadsheetId || input.spreadsheet_id || await ensureDefaultSpreadsheet();
         const range = input.range || 'Sheet1!A1';
@@ -97,11 +140,32 @@ const writeSheet: ToolAction = {
     }
 };
 
-const appendRow: ToolAction = {
+const appendRow: ToolActionDefinition = {
     name: 'append_row',
-    description: 'Append a new row to the end of a Google Sheets spreadsheet',
-    inputKeys: ['spreadsheetId', 'range', 'values'],
-    outputKeys: ['updatedRange', 'updatedRows'],
+    description: 'Append rows to the end of a Google Sheets spreadsheet without overwriting anything.',
+    capabilities: ['spreadsheet.write'],
+    sideEffect: 'write',
+    requiresAuth: true,
+    costProfile: { latencyMs: 900, cost: 0, reliability: 9 },
+    inputSchema: {
+        spreadsheetId: {
+            type: 'string',
+            description: 'Id of the spreadsheet, from its URL.',
+            required: true,
+            external: true
+        },
+        range: { type: 'string', description: 'Sheet or range to append into.' },
+        values: {
+            type: 'array',
+            description: 'Rows to append.',
+            required: true,
+            items: { type: 'array', description: 'One row of cell values.' }
+        }
+    },
+    outputSchema: {
+        updatedRange: { type: 'string', description: 'Range that received the rows.' },
+        updatedRows: { type: 'number', description: 'How many rows were appended.' }
+    },
     execute: async (input) => {
         const id = input.spreadsheetId || input.spreadsheet_id || await ensureDefaultSpreadsheet();
         const range = input.range || 'Sheet1';
@@ -115,7 +179,9 @@ const appendRow: ToolAction = {
 
 // ==================== TOOL DEFINITION ====================
 
-const googleSheetsTool: Tool = {
+const googleSheetsTool: ToolDefinition = {
+    category: 'spreadsheet',
+    costProfile: { latencyMs: 900, cost: 0, reliability: 9 },
     id: TOOL_ID,
     name: 'Google Sheets',
     description: 'Read, write, and append data in Google Sheets spreadsheets',

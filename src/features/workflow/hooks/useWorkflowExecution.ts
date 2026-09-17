@@ -3,7 +3,7 @@ import { Node, Edge } from 'reactflow';
 import { ExecutionLog, FlowEdge, GraphState } from '@features/workflow/types';
 import { executeNodeAction } from '@features/ai/services/aiService';
 import { WorkflowContextBuffer } from '@features/ai/types';
-import { getTool } from '@features/tools/toolRegistry';
+import { actionRequiresApproval, getTool } from '@features/tools/toolRegistry';
 import { evaluateCondition as evaluateSafeCondition } from '@features/workflow/services/safeExpression';
 import '@features/tools/connectors'; // ensure all tools are registered
 
@@ -274,9 +274,16 @@ export const useWorkflowExecution = (
             try {
                 let nodeOutput: Record<string, any>;
 
-                const requiresApproval = Boolean(node.data.requiresApproval) || (
-                    Boolean(node.data.toolId) && ['gmail', 'slack', 'whatsapp', 'google_sheets', 'google_drive'].includes(node.data.toolId)
-                );
+                // Approval is derived from the action's side-effect class, not from
+                // a hardcoded list of tool ids (which went stale whenever a
+                // connector was added, and gated harmless reads like read_inbox
+                // while missing anything new that actually sends).
+                //
+                // An `irreversible` action ALWAYS gates, and a workflow cannot opt
+                // out of that. A node may additionally opt IN via requiresApproval.
+                const requiresApproval =
+                    actionRequiresApproval(node.data.toolId, node.data.toolAction) ||
+                    Boolean(node.data.requiresApproval);
 
                 const signature = JSON.stringify({
                     nodeId: node.id,

@@ -25,18 +25,37 @@ import {
 
 // ---------------------------------------------------------------- schemas
 
+/** One declared input or output field of an action. */
+const catalogFieldSchema = z.object({
+  name: z.string().min(1).max(120),
+  type: z.string().max(40).optional().default('string'),
+  description: z.string().max(500).optional().default(''),
+  required: z.boolean().optional().default(false),
+  /** Must be supplied by the user; cannot come from an earlier step. */
+  external: z.boolean().optional().default(false),
+  format: z.string().max(40).optional(),
+  enum: z.array(z.string().max(120)).max(40).optional(),
+});
+
 const catalogActionSchema = z.object({
   name: z.string().min(1).max(120),
-  description: z.string().max(500).optional().default(''),
-  inputKeys: z.array(z.string().max(120)).max(50).optional().default([]),
-  outputKeys: z.array(z.string().max(120)).max(50).optional().default([]),
+  description: z.string().max(1000).optional().default(''),
+  capabilities: z.array(z.string().max(120)).max(20).optional().default([]),
   sideEffect: z.enum(['read', 'write', 'irreversible']).optional(),
+  requiresAuth: z.boolean().optional(),
+  requiresApproval: z.boolean().optional(),
+  inputs: z.array(catalogFieldSchema).max(60).optional().default([]),
+  outputs: z.array(catalogFieldSchema).max(60).optional().default([]),
+  // Flat key lists, still accepted for callers that only send those.
+  inputKeys: z.array(z.string().max(120)).max(60).optional().default([]),
+  outputKeys: z.array(z.string().max(120)).max(60).optional().default([]),
 });
 
 const catalogToolSchema = z.object({
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(200),
   description: z.string().max(1000).optional().default(''),
+  category: z.string().max(80).optional(),
   capabilities: z.array(z.string().max(120)).max(50).optional().default([]),
   authenticated: z.boolean().optional(),
   actions: z.array(catalogActionSchema).max(60).optional().default([]),

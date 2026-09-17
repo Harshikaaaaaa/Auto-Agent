@@ -1,4 +1,4 @@
-import { Tool, ToolAction } from '../types';
+import { ToolActionDefinition, ToolDefinition } from '../types';
 import { registerTool } from '../toolRegistry';
 
 const TOOL_ID = 'slack';
@@ -13,11 +13,27 @@ function isAvailable(): boolean {
 
 // ==================== ACTIONS ====================
 
-const sendMessage: ToolAction = {
+const sendMessage: ToolActionDefinition = {
     name: 'send_message',
-    description: 'Send a message to a Slack channel via webhook',
-    inputKeys: ['text', 'channel', 'username'],
-    outputKeys: ['success', 'message'],
+    description: 'Post a plain message to a Slack channel via an incoming webhook.',
+    capabilities: ['chat.send'],
+    // A posted message cannot be unposted, so this always needs approval.
+    sideEffect: 'irreversible',
+    requiresAuth: true,
+    costProfile: { latencyMs: 400, cost: 0, reliability: 8 },
+    inputSchema: {
+        text: { type: 'string', description: 'Message body.', required: true },
+        channel: {
+            type: 'string',
+            description: 'Channel override, for example "#alerts". Defaults to the webhook channel.',
+            external: true
+        },
+        username: { type: 'string', description: 'Display name to post as.' }
+    },
+    outputSchema: {
+        success: { type: 'boolean', description: 'Whether Slack accepted the message.' },
+        message: { type: 'string', description: 'The text that was posted.' }
+    },
     execute: async (input) => {
         const url = getWebhookUrl();
         if (!url) return { error: 'Slack webhook not configured. Set it up in tool settings.' };
@@ -31,11 +47,24 @@ const sendMessage: ToolAction = {
     }
 };
 
-const formatAndSend: ToolAction = {
+const formatAndSend: ToolActionDefinition = {
     name: 'format_and_send',
-    description: 'Format data into a rich Slack message with blocks and send it',
-    inputKeys: ['title', 'body', 'fields', 'channel'],
-    outputKeys: ['success', 'title', 'fieldsCount'],
+    description: 'Post a formatted Slack message with a header, body and field list.',
+    capabilities: ['chat.send', 'content.format'],
+    sideEffect: 'irreversible',
+    requiresAuth: true,
+    costProfile: { latencyMs: 450, cost: 0, reliability: 8 },
+    inputSchema: {
+        title: { type: 'string', description: 'Header line of the message.' },
+        body: { type: 'string', description: 'Main body, Slack markdown.', format: 'markdown' },
+        fields: { type: 'object', description: 'Label to value pairs rendered as a field grid.' },
+        channel: { type: 'string', description: 'Channel override.', external: true }
+    },
+    outputSchema: {
+        success: { type: 'boolean', description: 'Whether Slack accepted the message.' },
+        title: { type: 'string', description: 'Header that was posted.' },
+        fieldsCount: { type: 'number', description: 'How many fields were rendered.' }
+    },
     execute: async (input) => {
         const url = getWebhookUrl();
         if (!url) return { error: 'Slack webhook not configured' };
@@ -60,12 +89,14 @@ const formatAndSend: ToolAction = {
 
 // ==================== REGISTRATION ====================
 
-const slackTool: Tool = {
+const slackTool: ToolDefinition = {
     id: TOOL_ID,
     name: 'Slack',
-    description: 'Send messages and rich notifications to Slack channels',
+    description: 'Post messages and formatted notifications to Slack channels.',
     icon: 'Hash',
     color: '#E01E5A',
+    category: 'communication',
+    costProfile: { latencyMs: 400, cost: 0, reliability: 8 },
     scopes: [],
     actions: [sendMessage, formatAndSend],
     isAuthenticated: isAvailable,

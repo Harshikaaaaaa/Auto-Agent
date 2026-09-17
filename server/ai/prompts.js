@@ -22,7 +22,28 @@ function fence(text) {
   return `<<<\n${safe}\n>>>`;
 }
 
-/** Render the tool catalog compactly enough to stay affordable in tokens. */
+/** Render one field as a single compact line. */
+function renderField(field) {
+  const flags = [];
+  if (field.required) flags.push('required');
+  // Marked so the planner lists it under externalInputs instead of assuming an
+  // earlier step will produce it.
+  if (field.external) flags.push('user-supplied');
+  if (field.format) flags.push(field.format);
+  if (Array.isArray(field.enum) && field.enum.length > 0) {
+    flags.push(`one of: ${field.enum.join('|')}`);
+  }
+  const suffix = flags.length > 0 ? ` (${flags.join(', ')})` : '';
+  return `${field.name}: ${field.type}${suffix}`;
+}
+
+/**
+ * Render the tool catalog compactly enough to stay affordable in tokens.
+ *
+ * Includes the safety class and which inputs the user must supply, because both
+ * change what a correct plan looks like. Cost and latency hints are deliberately
+ * left out: they inform server-side routing, not planning.
+ */
 export function renderCatalog(catalog) {
   if (!Array.isArray(catalog) || catalog.length === 0) {
     return 'NO TOOLS ARE AVAILABLE. Every step that would need one must be marked unsupported.';
@@ -31,18 +52,38 @@ export function renderCatalog(catalog) {
   return catalog
     .map((tool) => {
       const actions = (tool.actions ?? [])
-        .map(
-          (a) =>
+        .map((a) => {
+          const inputs =
+            Array.isArray(a.inputs) && a.inputs.length > 0
+              ? a.inputs.map(renderField).join('; ')
+              : (a.inputKeys ?? []).join(', ');
+          const outputs =
+            Array.isArray(a.outputs) && a.outputs.length > 0
+              ? a.outputs.map((f) => f.name).join(', ')
+              : (a.outputKeys ?? []).join(', ');
+
+          const notes = [];
+          if (a.sideEffect) notes.push(`sideEffect: ${a.sideEffect}`);
+          if (a.requiresApproval) notes.push('pauses for human approval');
+          if (Array.isArray(a.capabilities) && a.capabilities.length > 0) {
+            notes.push(`capabilities: ${a.capabilities.join(', ')}`);
+          }
+
+          return (
             `    - action "${a.name}": ${a.description ?? ''}\n` +
-            `      inputKeys: [${(a.inputKeys ?? []).join(', ')}]\n` +
-            `      outputKeys: [${(a.outputKeys ?? []).join(', ')}]` +
-            (a.sideEffect ? `\n      sideEffect: ${a.sideEffect}` : ''),
-        )
+            `      inputs:  ${inputs || '(none)'}\n` +
+            `      outputs: ${outputs || '(none)'}` +
+            (notes.length > 0 ? `\n      ${notes.join(' | ')}` : '')
+          );
+        })
         .join('\n');
+
       const caps = (tool.capabilities ?? []).join(', ');
       return (
-        `- tool "${tool.id}" (${tool.name})${tool.authenticated === false ? ' [NOT CONNECTED]' : ''}\n` +
-        `  ${tool.description ?? ''}\n` +
+        `- tool "${tool.id}" (${tool.name})` +
+        (tool.category ? ` [${tool.category}]` : '') +
+        (tool.authenticated === false ? ' [NOT CONNECTED]' : '') +
+        `\n  ${tool.description ?? ''}\n` +
         (caps ? `  capabilities: ${caps}\n` : '') +
         actions
       );

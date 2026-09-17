@@ -1,4 +1,5 @@
 import { apiUrl } from '@config/api';
+import type { CatalogTool } from '@features/tools/toolRegistry';
 import type { Workflow } from '@features/workflow/types';
 import type { WorkflowContextBuffer } from '../types';
 
@@ -12,23 +13,12 @@ import type { WorkflowContextBuffer } from '../types';
 
 export type AiProviderHint = 'auto' | 'openrouter' | 'gemini' | 'ollama';
 
-/** Compact tool description sent to the planner. Built by `describeCatalog()`. */
-export interface CatalogAction {
-  name: string;
-  description: string;
-  inputKeys: string[];
-  outputKeys: string[];
-  sideEffect?: 'read' | 'write' | 'irreversible';
-}
-
-export interface CatalogTool {
-  id: string;
-  name: string;
-  description: string;
-  capabilities: string[];
-  authenticated?: boolean;
-  actions: CatalogAction[];
-}
+/**
+ * The catalog shape is owned by the tool registry, which builds it in
+ * `describeCatalog()`. It is re-exported here so callers of this client have one
+ * type to work with — duplicating the interface let the two drift apart.
+ */
+export type { CatalogAction, CatalogField, CatalogTool } from '@features/tools/toolRegistry';
 
 export interface AiCallMeta {
   provider: string;

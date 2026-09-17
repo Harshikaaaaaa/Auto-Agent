@@ -87,16 +87,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Mirrors the shape produced by the client's describeCatalog(). */
 const MINIMAL_CATALOG = [
   {
     id: 'gmail',
     name: 'Gmail',
     description: 'Email',
+    category: 'communication',
+    capabilities: ['email.send'],
+    authenticated: true,
     actions: [
       {
         name: 'send_email',
         description: 'Send an email',
-        inputKeys: ['to'],
+        capabilities: ['email.send'],
+        sideEffect: 'irreversible',
+        requiresAuth: true,
+        requiresApproval: true,
+        inputs: [
+          {
+            name: 'to',
+            type: 'string',
+            description: 'Recipient address.',
+            required: true,
+            external: true,
+            format: 'email',
+          },
+          { name: 'subject', type: 'string', description: 'Subject line.', required: true },
+        ],
+        outputs: [{ name: 'email_status', type: 'string', description: 'Outcome.' }],
+        inputKeys: ['to', 'subject'],
         outputKeys: ['email_status'],
       },
     ],
@@ -155,6 +175,32 @@ describe('POST /api/ai/plan', () => {
     // The anti-substitution rule must actually reach the model.
     expect(sentPrompt).toMatch(/unsupported/i);
     expect(sentPrompt).toMatch(/Do NOT substitute/i);
+  });
+
+  it('renders the capability metadata the planner needs', async () => {
+    const fetchMock = stubProvider('{"title":"x","steps":[]}');
+    await post('/api/ai/plan', { prompt: 'send an email', catalog: MINIMAL_CATALOG });
+
+    const sentPrompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
+
+    // Safety class and the approval consequence.
+    expect(sentPrompt).toContain('sideEffect: irreversible');
+    expect(sentPrompt).toContain('pauses for human approval');
+    // Capability tags, so the model can reason about what is available at all.
+    expect(sentPrompt).toContain('email.send');
+    // Which inputs the user must supply, versus what an earlier step can produce.
+    expect(sentPrompt).toContain('user-supplied');
+    expect(sentPrompt).toContain('required');
+    expect(sentPrompt).toContain('communication');
+  });
+
+  it('does not spend prompt tokens on cost hints', async () => {
+    const fetchMock = stubProvider('{"title":"x","steps":[]}');
+    await post('/api/ai/plan', { prompt: 'send an email', catalog: MINIMAL_CATALOG });
+
+    const sentPrompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
+    expect(sentPrompt).not.toContain('latencyMs');
+    expect(sentPrompt).not.toContain('reliability');
   });
 
   it('maps a provider auth failure to a safe error without the key', async () => {

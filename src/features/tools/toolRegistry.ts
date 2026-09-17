@@ -1,12 +1,106 @@
-import { Tool, ToolStatus, ToolAuth } from './types';
+import {
+    Capability,
+    SideEffect,
+    Tool,
+    ToolAction,
+    ToolActionDefinition,
+    ToolDefinition,
+    ToolStatus,
+    ToolAuth
+} from './types';
 
 // ==================== TOOL REGISTRY ====================
 
 const tools = new Map<string, Tool>();
 
+/**
+ * Fill in the fields the registry owns.
+ *
+ * `inputKeys`/`outputKeys` are DERIVED from the schemas rather than declared
+ * alongside them, so the two cannot drift apart. A connector that declares its
+ * own key list has it overwritten, and that is intentional.
+ */
+function normalizeAction(action: ToolActionDefinition): ToolAction {
+    return {
+        ...action,
+        inputKeys: Object.keys(action.inputSchema),
+        outputKeys: Object.keys(action.outputSchema)
+    };
+}
+
 /** Register a tool in the central registry */
-export function registerTool(tool: Tool): void {
-    tools.set(tool.id, tool);
+export function registerTool(tool: ToolDefinition | Tool): void {
+    const actions = tool.actions.map(normalizeAction);
+
+    // A tool's capabilities are the union of what its actions can do, so the two
+    // can never disagree.
+    const capabilities = Array.from(
+        new Set(actions.flatMap(action => action.capabilities))
+    ) as Capability[];
+
+    tools.set(tool.id, { ...tool, actions, capabilities } as Tool);
+}
+
+// ==================== SAFETY CLASSIFICATION ====================
+
+/**
+ * Whether an action must be approved by a human before it runs.
+ *
+ * An `irreversible` action ALWAYS requires approval — an email cannot be unsent
+ * and a message cannot be unposted. This is deliberately not overridable by
+ * workflow data: a saved workflow must not be able to opt out of the gate.
+ *
+ * This replaces a hardcoded list of tool ids in the execution hook, which went
+ * stale the moment a connector was added.
+ */
+export function actionRequiresApproval(toolId?: string, actionName?: string): boolean {
+    if (!toolId || !actionName) return false;
+    const action = getTool(toolId)?.actions.find(a => a.name === actionName);
+    return action?.sideEffect === 'irreversible';
+}
+
+/** Side-effect class of an action, or undefined when it is not registered. */
+export function getActionSideEffect(toolId?: string, actionName?: string): SideEffect | undefined {
+    if (!toolId || !actionName) return undefined;
+    return getTool(toolId)?.actions.find(a => a.name === actionName)?.sideEffect;
+}
+
+/**
+ * Every registered action that provides a capability, best first.
+ *
+ * Ordered by reliability then latency, so Task 12 can fall back to the next best
+ * provider when one fails.
+ */
+export function findActionsByCapability(
+    capability: Capability
+): Array<{ toolId: string; toolName: string; action: ToolAction }> {
+    const matches: Array<{ toolId: string; toolName: string; action: ToolAction }> = [];
+
+    for (const tool of getAllTools()) {
+        for (const action of tool.actions) {
+            if (action.capabilities.includes(capability)) {
+                matches.push({ toolId: tool.id, toolName: tool.name, action });
+            }
+        }
+    }
+
+    return matches.sort((a, b) => {
+        const aProfile = a.action.costProfile ?? getTool(a.toolId)?.costProfile;
+        const bProfile = b.action.costProfile ?? getTool(b.toolId)?.costProfile;
+        const reliability = (bProfile?.reliability ?? 0) - (aProfile?.reliability ?? 0);
+        if (reliability !== 0) return reliability;
+        return (aProfile?.latencyMs ?? 0) - (bProfile?.latencyMs ?? 0);
+    });
+}
+
+/** Input fields the user must supply, which cannot come from upstream state. */
+export function getExternalInputKeys(toolId?: string, actionName?: string): string[] {
+    if (!toolId || !actionName) return [];
+    const action = getTool(toolId)?.actions.find(a => a.name === actionName);
+    if (!action) return [];
+    return Object.entries(action.inputSchema)
+        .filter(([, schema]) => schema.external)
+        .map(([key]) => key);
 }
 
 /** Get a tool by ID */
@@ -44,40 +138,95 @@ export interface CapabilityMatch {
     rationale: string[];
 }
 
-/**
- * Compact, serialisable description of every registered tool.
- *
- * This is what the planner sends to the model, and it is the ONLY source of
- * truth the model may bind a step to. If a capability is absent here, the
- * planner must mark the step unsupported rather than substitute a different
- * tool. Task 6 enriches each action with schemas and side-effect class.
- */
-export function describeCatalog(): Array<{
+/** One input field as sent to the planner. */
+export interface CatalogField {
+    name: string;
+    type: string;
+    description: string;
+    required: boolean;
+    /** Must be supplied by the user; cannot come from an earlier step. */
+    external: boolean;
+    format?: string;
+    enum?: readonly string[];
+}
+
+/** One action as sent to the planner. */
+export interface CatalogAction {
+    name: string;
+    description: string;
+    capabilities: readonly Capability[];
+    sideEffect: SideEffect;
+    requiresAuth: boolean;
+    requiresApproval: boolean;
+    inputs: CatalogField[];
+    outputs: CatalogField[];
+    /** Kept for consumers that only need the flat key lists. */
+    inputKeys: string[];
+    outputKeys: string[];
+}
+
+/** One tool as sent to the planner. */
+export interface CatalogTool {
     id: string;
     name: string;
     description: string;
-    capabilities: string[];
+    category: string;
+    capabilities: readonly Capability[];
     authenticated: boolean;
-    actions: Array<{
-        name: string;
-        description: string;
-        inputKeys: string[];
-        outputKeys: string[];
-    }>;
-}> {
+    actions: CatalogAction[];
+}
+
+function describeFields(schema: Record<string, import('./types').FieldSchema>): CatalogField[] {
+    return Object.entries(schema).map(([name, field]) => ({
+        name,
+        type: field.type,
+        description: field.description,
+        required: Boolean(field.required),
+        external: Boolean(field.external),
+        ...(field.format ? { format: field.format } : {}),
+        ...(field.enum ? { enum: field.enum } : {})
+    }));
+}
+
+/**
+ * Compact, serialisable description of every registered tool.
+ *
+ * This is what the planner sends to the model, and it is the ONLY source of truth
+ * the model may bind a step to. If a capability is absent here, the planner marks
+ * the step unsupported rather than substituting a different tool.
+ *
+ * Cost/latency/reliability hints are deliberately NOT included: they exist for
+ * routing decisions the server makes, and spending prompt tokens on them would
+ * invite the model to optimise for the wrong thing.
+ */
+export function describeCatalog(): CatalogTool[] {
     return getAllTools().map(tool => ({
         id: tool.id,
         name: tool.name,
         description: tool.description,
+        category: tool.category,
         capabilities: tool.capabilities ?? [],
         authenticated: tool.isAuthenticated(),
         actions: tool.actions.map(action => ({
             name: action.name,
             description: action.description,
+            capabilities: action.capabilities,
+            sideEffect: action.sideEffect,
+            requiresAuth: action.requiresAuth,
+            requiresApproval: action.sideEffect === 'irreversible',
+            inputs: describeFields(action.inputSchema),
+            outputs: describeFields(action.outputSchema),
             inputKeys: action.inputKeys,
             outputKeys: action.outputKeys
         }))
     }));
+}
+
+/** Every capability provided by at least one registered action. */
+export function getAvailableCapabilities(): Capability[] {
+    return Array.from(
+        new Set(getAllTools().flatMap(tool => tool.actions.flatMap(a => a.capabilities)))
+    ).sort();
 }
 
 export function getToolCapabilityMatches(searchText: string): CapabilityMatch[] {
@@ -193,8 +342,18 @@ export function getToolStatuses(): ToolStatus[] {
         name: t.name,
         icon: t.icon,
         color: t.color,
+        category: t.category,
         authenticated: t.isAuthenticated(),
-        actions: t.actions.map(a => ({ name: a.name, description: a.description }))
+        capabilities: t.capabilities ?? [],
+        actions: t.actions.map(a => ({
+            name: a.name,
+            description: a.description,
+            sideEffect: a.sideEffect,
+            requiresAuth: a.requiresAuth,
+            capabilities: a.capabilities,
+            // Surfaced so the UI can show which steps will pause for approval.
+            requiresApproval: a.sideEffect === 'irreversible'
+        }))
     }));
 }
 

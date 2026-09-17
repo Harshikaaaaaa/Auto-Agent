@@ -1,7 +1,6 @@
 import { Tool, ToolAction } from './types';
-import { registerTool, saveToolAuth } from './toolRegistry';
+import { registerTool } from './toolRegistry';
 
-// @ts-ignore - Vite injects these at build time
 const getOpenRouterKey = () => {
     if (typeof process !== 'undefined' && process.env) {
         return process.env['OPENROUTER_API_KEY'];

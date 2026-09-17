@@ -4,37 +4,32 @@
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
     "module": "ESNext",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
-    "types": [
-      "node",
-      "react",
-      "react-dom"
-    ],
+    "types": ["node", "react", "react-dom", "vitest/globals"],
     "moduleResolution": "bundler",
     "isolatedModules": true,
     "moduleDetection": "force",
     "allowJs": true,
+    "checkJs": false,
     "jsx": "react-jsx",
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitAny": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@features/*": [
-        "./src/features/*"
-      ],
-      "@shared/*": [
-        "./src/shared/*"
-      ],
-      "@config/*": [
-        "./src/config/*"
-      ]
+      "@/*": ["./src/*"],
+      "@features/*": ["./src/features/*"],
+      "@shared/*": ["./src/shared/*"],
+      "@config/*": ["./src/config/*"]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": ["src", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "coverage", "docs"]
 }

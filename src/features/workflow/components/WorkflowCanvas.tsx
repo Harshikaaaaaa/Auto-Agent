@@ -25,10 +25,8 @@ import {
     Box,
     FileText,
     Mail,
-    History,
     Save,
     Download,
-    Upload,
     Trash2,
     Undo2,
     Redo2,
@@ -39,10 +37,10 @@ import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
 import { NodeType } from '@/shared/types';
-import { generateWorkflow } from '@features/ai/services/aiService';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
 import { getTool, getAllTools, getToolCapabilityMatches } from '@features/tools/toolRegistry';
+import type { ReusableNodeTemplate } from '@features/workflow/types';
 import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
 import { saveWorkflow, loadWorkflow, listWorkflows, deleteWorkflow, SavedWorkflow } from '@features/workflow/services/workflowStorage';
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
@@ -274,7 +272,7 @@ export function WorkflowCanvas() {
     const [authReconnect, setAuthReconnect] = useState<{ toolId: string; toolName: string; message: string } | null>(null);
     const [approvalRequest, setApprovalRequest] = useState<{ nodeId: string; nodeLabel: string; message: string } | null>(null);
     const [activeView, setActiveView] = useState<'graph' | 'execution'>('graph');
-    const reusableToolNodes = useMemo(() =>
+    const reusableToolNodes = useMemo<ReusableNodeTemplate[]>(() =>
         getAllTools().flatMap(tool =>
             tool.actions.map(action => ({
                 toolId: tool.id,
@@ -290,7 +288,7 @@ export function WorkflowCanvas() {
         []
     );
 
-    const reusableHelperNodes = useMemo(() => [
+    const reusableHelperNodes = useMemo<ReusableNodeTemplate[]>(() => [
         {
             id: 'set_variable',
             label: 'Set Variable',
@@ -377,7 +375,7 @@ export function WorkflowCanvas() {
         }
     ], []);
 
-    const reusableNodes = useMemo(() => [...reusableToolNodes, ...reusableHelperNodes], [reusableToolNodes, reusableHelperNodes]);
+    const reusableNodes = useMemo<ReusableNodeTemplate[]>(() => [...reusableToolNodes, ...reusableHelperNodes], [reusableToolNodes, reusableHelperNodes]);
     const activeTask = activeTaskId ? taskSessions.find(task => task.id === activeTaskId) ?? null : null;
     const chatMessages = activeTask?.messages ?? [];
     const activeTaskDraft = activeTaskId ? (taskDrafts[activeTaskId] ?? '') : magicPrompt;
@@ -488,8 +486,8 @@ export function WorkflowCanvas() {
         try {
             const saved = localStorage.getItem('autoagent_selected_model');
             if (saved) return saved;
-        } catch (e) {
-            // ignore
+        } catch {
+            // Storage unavailable (private mode): fall back to the default model.
         }
         return 'auto';
     });
@@ -497,8 +495,8 @@ export function WorkflowCanvas() {
     useEffect(() => {
         try {
             localStorage.setItem('autoagent_selected_model', selectedModel);
-        } catch (e) {
-            // ignore
+        } catch {
+            // Storage unavailable (private mode): selection stays in memory only.
         }
     }, [selectedModel]);
     const [generationStatuses, setGenerationStatuses] = useState<Record<string, 'pending' | 'generating' | 'done' | 'error'>>({});
@@ -592,8 +590,8 @@ export function WorkflowCanvas() {
             (window as any).__workflowApprovalHandlers = { approve, reject };
         });
     });
-    const { toolStatuses, authInProgress, authenticate, disconnect } = useTools();
-    const { undo, redo, canUndo, canRedo, takeSnapshot } = useUndoRedo(nodes, edges, setNodes, setEdges);
+    const { toolStatuses, authInProgress, authenticate } = useTools();
+    const { undo, redo, canUndo, canRedo } = useUndoRedo(nodes, edges, setNodes, setEdges);
 
     useEffect(() => {
         try {
@@ -678,7 +676,7 @@ export function WorkflowCanvas() {
     const showSplash = nodes.length === 0 && !isGenerating;
     const showGeneratingOverlay = nodes.length === 0 && isGenerating;
 
-    const onConnectStart = useCallback((_: React.MouseEvent | TouchEvent, params: { nodeId?: string | null; handleType?: string | null; handleId?: string | null }) => {
+    const onConnectStart = useCallback((_: React.MouseEvent | React.TouchEvent, params: { nodeId?: string | null; handleType?: string | null; handleId?: string | null }) => {
         if (!params.nodeId) return;
 
         const sourceNode = nodes.find(n => n.id === params.nodeId);
@@ -881,7 +879,7 @@ export function WorkflowCanvas() {
                 return;
             }
 
-            let template = reusableHelperNodes.find(item =>
+            let template: ReusableNodeTemplate | undefined = reusableHelperNodes.find(item =>
                 matchesTemplate(item.label, ['approval', 'approve', 'human', 'review']) ||
                 matchesTemplate(item.label, ['validation', 'check']) ||
                 matchesTemplate(item.label, ['wait', 'delay', 'pause']) ||
@@ -899,6 +897,11 @@ export function WorkflowCanvas() {
                 );
 
                 template = toolTemplate || reusableHelperNodes.find(item => item.label.toLowerCase().includes('validation') || item.label.toLowerCase().includes('set variable')) || reusableHelperNodes[0];
+            }
+
+            if (!template) {
+                updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: 'No reusable step template is available to apply that change.' }]);
+                return;
             }
 
             const newId = createNodeId(template.label || 'node');
@@ -941,7 +944,7 @@ export function WorkflowCanvas() {
         if (!workflowPlan) return;
         
         // Stream nodes one by one onto the canvas
-        const formattedNodes = workflowPlan.nodes.map((n: any, idx: number) => ({
+        const formattedNodes = workflowPlan.nodes.map((n: any) => ({
             ...n,
             position: { x: n.position.x + 300, y: n.position.y + 150 },
             data: {
@@ -1093,9 +1096,8 @@ export function WorkflowCanvas() {
             markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }
         };
 
-        const finalEdges = target
+        const finalEdges: Edge[] = target
             ? [
-                ...((setEdges && []) as Edge[]),
                 { id: `edge_${newNodeId}_${target}`, source: newNodeId, target, animated: true, style: { strokeWidth: 2, stroke: '#2dd4bf', strokeDasharray: '4,4' }, markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' } } as Edge
             ]
             : [];
@@ -1222,7 +1224,7 @@ export function WorkflowCanvas() {
         });
 
         const missingKeys = Array.from(requiredInputs.entries())
-            .filter(([key, value]) => !value || String(value).trim() === '')
+            .filter(([, value]) => !value || String(value).trim() === '')
             .map(([key]) => key);
 
         if (missingKeys.length === 0) {
@@ -1771,10 +1773,15 @@ export function WorkflowCanvas() {
                             <div className="mt-3 flex justify-end">
                                 <button
                                     onClick={() => {
+                                        const directTarget = connectionSuggestion.target;
+                                        if (!directTarget) {
+                                            setConnectionSuggestion(null);
+                                            return;
+                                        }
                                         setEdges(prev => addEdge({
-                                            id: `edge_${connectionSuggestion.source}_${connectionSuggestion.target}`,
+                                            id: `edge_${connectionSuggestion.source}_${directTarget}`,
                                             source: connectionSuggestion.source,
-                                            target: connectionSuggestion.target,
+                                            target: directTarget,
                                             animated: true,
                                             style: { strokeWidth: 2, stroke: '#2dd4bf', strokeDasharray: '4,4' },
                                             markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }

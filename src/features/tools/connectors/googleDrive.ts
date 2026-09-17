@@ -1,4 +1,4 @@
-import { Tool, ToolAction, ToolAuth } from '../types';
+import { Tool, ToolAction } from '../types';
 import { registerTool, saveToolAuth, loadToolAuth, clearToolAuth, silentRefreshGoogleToken } from '../toolRegistry';
 
 const TOOL_ID = 'google_drive';

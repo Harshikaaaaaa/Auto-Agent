@@ -166,7 +166,7 @@ function createLangGraphNode(
             const updatedData = { ...state.data };
             for (const [key, value] of Object.entries(nodeOutput)) {
                 switch (reducer) {
-                    case 'append':
+                    case 'append': {
                         const existing = updatedData[key];
                         updatedData[key] = Array.isArray(existing)
                             ? [...existing, value]
@@ -174,6 +174,7 @@ function createLangGraphNode(
                                 ? [existing, value]
                                 : [value];
                         break;
+                    }
 
                     case 'merge':
                         if (typeof updatedData[key] === 'object' && typeof value === 'object' && !Array.isArray(value)) {

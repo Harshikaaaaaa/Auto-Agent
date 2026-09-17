@@ -205,7 +205,7 @@ Return a strictly valid JSON object with 'nodes', 'edges', and 'initialState'.`;
         return workflow;
     } catch (e) {
         console.error("JSON Error:", response.text, e);
-        throw new Error("Failed to generate state graph.");
+        throw new Error("Failed to generate state graph.", { cause: e });
     }
 };
 

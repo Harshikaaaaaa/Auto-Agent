@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { Node, Edge } from 'reactflow';
-import { ExecutionLog, GraphState } from '@features/workflow/types';
+import { ExecutionLog, FlowEdge, GraphState } from '@features/workflow/types';
 import { executeNodeAction } from '@features/ai/services/aiService';
 import { WorkflowContextBuffer } from '@features/ai/types';
 import { getTool } from '@features/tools/toolRegistry';
@@ -88,7 +88,7 @@ function mergeIntoState(
         if (key === '__metadata') continue; // protect metadata
 
         switch (reducer) {
-            case 'append':
+            case 'append': {
                 const existing = newState[key];
                 newState[key] = Array.isArray(existing)
                     ? [...existing, value]
@@ -96,6 +96,7 @@ function mergeIntoState(
                         ? [existing, value]
                         : [value];
                 break;
+            }
 
             case 'merge':
                 if (typeof newState[key] === 'object' && typeof value === 'object' && !Array.isArray(value)) {
@@ -117,7 +118,7 @@ function mergeIntoState(
 
 export const useWorkflowExecution = (
     nodes: Node[],
-    edges: Edge[],
+    edges: FlowEdge[],
     setNodes: (nodes: Node[] | ((nodes: Node[]) => Node[])) => void,
     onApprovalRequired?: (payload: { nodeId: string; nodeLabel: string; message: string }) => Promise<boolean>
 ) => {

@@ -1,7 +1,6 @@
 import { MemorySaver, Checkpoint } from "@langchain/langgraph";
-import { StateGraph } from "@langchain/langgraph";
 import { Node as FlowNode, Edge } from 'reactflow';
-import { buildLangGraph, WorkflowStateType, WorkflowState } from './langgraphExecutor';
+import { buildLangGraph, WorkflowStateType } from './langgraphExecutor';
 
 const CHECKPOINT_STORAGE_KEY = 'autoagent_checkpoints';
 
@@ -63,12 +62,10 @@ class LocalStorageSaver extends MemorySaver {
  */
 export class WorkflowCheckpointManager {
     private checkpointer: LocalStorageSaver;
-    private checkpoints: Map<string, any>;
 
     constructor() {
         this.checkpointer = new LocalStorageSaver();
         this.checkpointer.hydrateFromStorage();
-        this.checkpoints = new Map();
     }
 
     /**
@@ -330,7 +327,7 @@ export class HumanInTheLoopWorkflow {
      * Clear all pending approvals
      */
     clearAll(): void {
-        for (const [id, approval] of this.pendingApprovals.entries()) {
+        for (const [, approval] of this.pendingApprovals.entries()) {
             approval.resolve(false);
         }
         this.pendingApprovals.clear();

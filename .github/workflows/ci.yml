@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege by default.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Each gate runs separately so a failure names the failing gate.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build:only
+
+      # NOTE: repo-wide `format:check` is deliberately not gated yet. The legacy
+      # tree predates Prettier and is rewritten across Tasks 8-15; gating now
+      # would bury the security fixes under a whole-repo reformat diff. The
+      # `npm run format` script is available and the gate is added in Task 15.
+      #
+      # NOTE: the "no secrets in the built bundle" gate is added in Task 2,
+      # together with the change that stops inlining provider keys.

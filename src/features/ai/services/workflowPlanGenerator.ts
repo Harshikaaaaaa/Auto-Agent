@@ -5,7 +5,6 @@ import { generateWorkflow } from '@features/ai/services/aiService';
 import { NodeType } from '@/shared/types';
 
 // Get API key from Vite define
-// @ts-ignore - Vite injects these at build time
 const getApiKey = () => {
     if (typeof process !== 'undefined' && process.env) {
         return process.env['OPENROUTER_API_KEY'];
@@ -43,7 +42,6 @@ const buildIntentPlanFromPrompt = (prompt: string, matches: Array<{ toolId: stri
     const isSlacking = /(slack|notify|message)/i.test(prompt);
 
     const requiredTools = Array.from(new Set(matches.slice(0, 4).map(match => match.toolId)));
-    const primaryTool = requiredTools[0] || 'workflow';
 
     const steps: PlanStep[] = [
         {
@@ -126,7 +124,6 @@ export const buildPlanFromPromptMatches = (
     prompt: string,
     matches: Array<{ toolId: string; toolName: string; actionName: string; score: number; rationale: string[] }>
 ): WorkflowPlan => {
-    const normalized = prompt.toLowerCase();
     const hasMultiIntent = /(scrap|collect|extract|sentiment|analyz|group|save|write|sheet|notify|email|slack)/i.test(prompt) &&
         /(scrap|collect|extract|sentiment|analyz|group|save|write|sheet|notify|email|slack)/i.test(prompt);
 
@@ -348,7 +345,7 @@ Keep it SHORT - maximum 5 steps. Focus on the CORE workflow path.`;
 export const planToWorkflow = (plan: WorkflowPlan): Workflow => {
     const nodes: WorkflowNode[] = [];
     const edges: WorkflowEdge[] = [];
-    let yPosition = 0;
+    const yPosition = 0;
 
     plan.steps.forEach((step, idx) => {
         const nodeId = step.id || `node_${idx}`;

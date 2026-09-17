@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Test & build artifacts
+coverage
+
+# Server runtime state
+server/.wa-auth/
+server/data/*.db
+server/data/*.db-journal
+server/data/*.db-wal
+server/data/*.db-shm

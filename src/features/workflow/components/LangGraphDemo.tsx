@@ -18,13 +18,12 @@ interface LangGraphDemoProps {
  */
 export const LangGraphDemo: React.FC<LangGraphDemoProps> = ({ nodes, edges, setNodes }) => {
     const [threadId, setThreadId] = useState<string>('');
-    const [checkpointData, setCheckpointData] = useState<string>('');
+    const [, setCheckpointData] = useState<string>('');
     const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
 
     const {
         isExecuting,
         executionLogs,
-        graphState,
         langGraphState,
         executeFlow,
         clearLogs,

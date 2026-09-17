@@ -774,7 +774,7 @@ function generateLlamaIndex(ctx: WorkflowExportContext): string {
     }).join('\n\n');
 
     const firstEventClass = (orderedNodes[0]?.varName || 'start').charAt(0).toUpperCase() + (orderedNodes[0]?.varName || 'start').slice(1) + 'Event';
-    const wfClassName = sanitizeIdentifier(title).replace(/(^|_)([a-z])/g, (_, a, b) => b.toUpperCase()) + 'Workflow';
+    const wfClassName = sanitizeIdentifier(title).replace(/(^|_)([a-z])/g, (_full, _sep, b) => b.toUpperCase()) + 'Workflow';
 
     return `"""
 Workflow: ${title}

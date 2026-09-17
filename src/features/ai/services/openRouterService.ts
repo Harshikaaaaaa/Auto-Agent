@@ -127,7 +127,6 @@ CRITICAL: Do NOT include any 'analysis', 'thinking', or 'explanation' fields. Re
 `;
 
     try {
-        // @ts-ignore
         const model = AI_CONFIG.openRouterModel || "google/gemini-2.0-flash-001";
         const workflow = await callOpenRouter(aiPrompt, model, true) as Workflow;
 
@@ -207,7 +206,7 @@ CRITICAL: Do NOT include any 'analysis', 'thinking', or 'explanation' fields. Re
         return workflow;
     } catch (e) {
         console.error("OpenRouter Generation Error:", e);
-        throw new Error("Failed to generate state graph via OpenRouter.");
+        throw new Error("Failed to generate state graph via OpenRouter.", { cause: e });
     }
 };
 
@@ -256,7 +255,6 @@ export const executeNodeAction = async (
         prompt += `\n## Required Output Keys: ${JSON.stringify(outputKeys)}\n`;
         prompt += `Return ONLY a valid JSON object matching these keys.\n`;
 
-        // @ts-ignore
         const model = AI_CONFIG.openRouterModel || "google/gemini-2.0-flash-001";
         const result = await callOpenRouter(prompt, model, true);
 

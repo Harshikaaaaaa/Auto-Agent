@@ -1,12 +1,14 @@
-import React from 'react';
 import { ReactFlowProvider } from 'reactflow';
 import { WorkflowCanvas } from '@features/workflow/components/WorkflowCanvas';
+import { ErrorBoundary } from './ErrorBoundary';
 import 'reactflow/dist/style.css';
 
 export default function App() {
-    return (
-        <ReactFlowProvider>
-            <WorkflowCanvas />
-        </ReactFlowProvider>
-    );
+  return (
+    <ErrorBoundary>
+      <ReactFlowProvider>
+        <WorkflowCanvas />
+      </ReactFlowProvider>
+    </ErrorBoundary>
+  );
 }

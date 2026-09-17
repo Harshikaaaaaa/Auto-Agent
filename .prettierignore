@@ -1,0 +1,10 @@
+dist
+coverage
+node_modules
+package-lock.json
+docs
+*.bak
+index.html.bak
+server/data
+server/.wa-auth
+*.log

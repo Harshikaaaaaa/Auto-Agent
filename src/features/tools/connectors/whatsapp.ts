@@ -37,7 +37,7 @@ const sendMessage: ToolAction = {
             const data = await res.json();
             if (!res.ok) return { error: data.error };
             return { success: true, to: data.to };
-        } catch (e) {
+        } catch (_e) {
             return { error: 'Failed to contact WhatsApp bridge' };
         }
     }
@@ -116,7 +116,9 @@ const whatsappTool: Tool = {
                         alert('WhatsApp connected successfully!');
                         resolve();
                     }
-                } catch { }
+                } catch {
+                    // Bridge not reachable yet; keep polling until the timeout below.
+                }
             }, 2000);
 
             // Stop polling after 2 minutes
@@ -130,7 +132,9 @@ const whatsappTool: Tool = {
     disconnect: async () => {
         try {
             await fetch(`${BRIDGE_URL}/disconnect`, { method: 'POST' });
-        } catch { }
+        } catch {
+            // Bridge already down: still clear the local connected flag below.
+        }
         localStorage.removeItem('autoagent_whatsapp_connected');
     }
 };

@@ -1,4 +1,39 @@
+import type { Edge, Node } from 'reactflow';
 import { NodeType } from '@/shared/types';
+
+// ==================== REACT FLOW BRIDGE TYPES ====================
+
+/**
+ * A React Flow edge carrying AutoAgent's conditional-routing expression.
+ *
+ * React Flow's own `Edge` has no `condition` field, so every place that reads
+ * routing conditions must use this type. The expression is evaluated by the
+ * safe evaluator (never `new Function`) — see `safeExpression.ts`.
+ */
+export type FlowEdge = Edge & { condition?: string };
+
+/** A React Flow node whose data payload is an AutoAgent `NodeData`. */
+export type FlowNode = Node<NodeData>;
+
+/**
+ * A reusable workflow block offered in the node palette.
+ *
+ * Tool-backed templates carry `toolId`/`toolAction`; helper/logic templates
+ * carry only a state contract. Both shapes live in one array in the UI, so the
+ * fields that only one variant uses are optional.
+ */
+export interface ReusableNodeTemplate {
+    id?: string;
+    label: string;
+    description: string;
+    nodeType: NodeType;
+    toolId?: string;
+    toolName?: string;
+    toolAction?: string;
+    inputKeys?: string[];
+    outputKeys?: string[];
+    stateContract?: NodeStateContract;
+}
 
 // ==================== GRAPH STATE ====================
 

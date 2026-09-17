@@ -160,7 +160,7 @@ Return ONLY a valid JSON object with this structure:
         return workflow;
     } catch (e) {
         console.error("Ollama Generation Error:", e);
-        throw new Error("Failed to generate workflow via Ollama.");
+        throw new Error("Failed to generate workflow via Ollama.", { cause: e });
     }
 };
 

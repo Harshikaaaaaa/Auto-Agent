@@ -311,6 +311,27 @@ describe('POST /api/ai/patch', () => {
     expect(json.patch.operations).toEqual([]);
     expect(json.patch.clarification).toBe('Which step?');
   });
+
+  it('puts retry feedback in its own section, not inside the user instruction', async () => {
+    const fetchMock = stubProvider(JSON.stringify({ summary: 'ok', operations: [] }));
+    await post('/api/ai/patch', {
+      message: 'remove the sheets step',
+      graph: { nodes: [{ id: 'n1', label: 'Start' }] },
+      catalog: [],
+      repairFeedback: 'Operation 1 refers to nodeId "n9", which is not a node.',
+    });
+
+    const sentPrompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
+    expect(sentPrompt).toContain('YOUR PREVIOUS ANSWER WAS REJECTED');
+    expect(sentPrompt).toContain('is not a node');
+
+    // The instruction section is fenced as untrusted data the model is told not
+    // to take orders from. Feedback placed there would be ignored by design, so
+    // it has to appear BEFORE that block.
+    expect(sentPrompt.indexOf('YOUR PREVIOUS ANSWER WAS REJECTED')).toBeLessThan(
+      sentPrompt.indexOf('USER INSTRUCTION'),
+    );
+  });
 });
 
 describe('GET /api/ai/config', () => {

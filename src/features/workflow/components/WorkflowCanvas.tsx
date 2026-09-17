@@ -34,6 +34,14 @@ import {
 } from 'lucide-react';
 import { generateWorkflowPlan, planToWorkflow, PlanValidationError, type WorkflowPlan } from '@features/ai/services/workflowPlanGenerator';
 import { PlanPreview } from './PlanPreview';
+import {
+    applyPatch,
+    describeOperation,
+    generateGraphPatch,
+    isDestructive,
+    PatchValidationError,
+    type GraphPatch
+} from '@features/ai/services/workflowPatchGenerator';
 import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
@@ -41,7 +49,13 @@ import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
 import { getTool, getAllTools } from '@features/tools/toolRegistry';
-import type { FlowEdge, ReusableNodeTemplate, Workflow } from '@features/workflow/types';
+import type {
+    FlowEdge,
+    ReusableNodeTemplate,
+    Workflow,
+    WorkflowEdge,
+    WorkflowNode as WorkflowNodeModel
+} from '@features/workflow/types';
 import { validateCondition } from '@features/workflow/services/safeExpression';
 import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
 import { saveWorkflow, loadWorkflow, listWorkflows, deleteWorkflow, SavedWorkflow } from '@features/workflow/services/workflowStorage';
@@ -496,6 +510,14 @@ export function WorkflowCanvas() {
     } | null>(null);
     const [isCommittingPlan, setIsCommittingPlan] = useState(false);
     const [planStep, setPlanStep] = useState(0);
+    /** A chat edit is being worked out. Blocks a second concurrent instruction. */
+    const [isPatching, setIsPatching] = useState(false);
+    /**
+     * A validated patch that removes or replaces steps, held for confirmation.
+     * Losing a configured node to one ambiguous sentence is not recoverable —
+     * canvas undo records no history yet — so these are never auto-applied.
+     */
+    const [pendingPatch, setPendingPatch] = useState<GraphPatch | null>(null);
     const [selectedModel, setSelectedModel] = useState<string>(() => {
         try {
             const saved = localStorage.getItem('autoagent_selected_model');
@@ -819,106 +841,101 @@ export function WorkflowCanvas() {
         }
     };
 
-    const handleWorkflowChatSubmit = useCallback(() => {
-        const prompt = chatInput.trim();
-        if (!prompt || !activeTaskId) return;
+    /**
+     * Apply a validated patch to the canvas and report exactly what changed.
+     */
+    const applyGraphPatch = useCallback((patch: GraphPatch) => {
+        const result = applyPatch(
+            { nodes: nodes as unknown as WorkflowNodeModel[], edges: edges as unknown as WorkflowEdge[] },
+            patch
+        );
 
-        const messageText = prompt.toLowerCase();
-        updateActiveTaskMessages(prev => [...prev, { role: 'user', text: prompt }]);
+        setNodes(result.nodes as unknown as Node[]);
+        setEdges(result.edges.map(edge => ({
+            ...edge,
+            animated: true,
+            style: { strokeWidth: 2, stroke: '#2dd4bf', strokeDasharray: '4,4' },
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }
+        })) as unknown as Edge[]);
+
+        const changes = result.applied.length > 0
+            ? result.applied.map(line => `- ${line}`).join('\n')
+            : '- nothing changed';
+
+        updateActiveTaskMessages(prev => [...prev, {
+            role: 'assistant',
+            text: `${patch.summary || 'Applied your change.'}\n${changes}`
+        }]);
+    }, [nodes, edges, setNodes, setEdges, updateActiveTaskMessages]);
+
+    /**
+     * Chat editing.
+     *
+     * The model returns operations against the real graph; every one is validated
+     * against that graph and the tool catalog before anything is applied. There is
+     * deliberately NO fallback: the previous implementation could not fail to do
+     * something, so an instruction it had no branch for — "I didn't mention Google
+     * Sheets, fix it" — fell through to adding an unrelated node. An instruction
+     * that cannot be mapped now produces a question or an error instead.
+     */
+    const handleWorkflowChatSubmit = useCallback(async () => {
+        const instruction = chatInput.trim();
+        if (!instruction || !activeTaskId || isPatching) return;
+
+        updateActiveTaskMessages(prev => [...prev, { role: 'user', text: instruction }]);
         setChatInput('');
+        setPendingPatch(null);
 
-        const selected = selectedNodeId ? nodes.find(node => node.id === selectedNodeId) : nodes[nodes.length - 1];
-        const triggerNode = nodes.find(node => node.type === 'trigger') || nodes[0];
+        if (nodes.length === 0) {
+            updateActiveTaskMessages(prev => [...prev, {
+                role: 'assistant',
+                text: 'There is no workflow on the canvas yet. Describe what you want built and I will plan it first.'
+            }]);
+            return;
+        }
 
-        const matchesTemplate = (label: string, fragments: string[]) =>
-            fragments.some(fragment => label.toLowerCase().includes(fragment));
-
+        setIsPatching(true);
         try {
-            if (messageText.includes('rename') || messageText.includes('change name') || messageText.includes('call it')) {
-                const nextLabel = prompt.replace(/^(rename|change name|call it)/i, '').trim();
-                if (selected && nextLabel) {
-                    setNodes(prev => prev.map(node => node.id === selected.id ? { ...node, data: { ...node.data, label: nextLabel } } : node));
-                    updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: `Updated the selected step to “${nextLabel}”.` }]);
-                    return;
-                }
-            }
-
-            if (messageText.includes('delete') || messageText.includes('remove') || messageText.includes('remove last')) {
-                if (selected) {
-                    setNodes(prev => prev.filter(node => node.id !== selected.id));
-                    setEdges(prev => prev.filter(edge => edge.source !== selected.id && edge.target !== selected.id));
-                    updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: `Removed the selected node and its connected edges.` }]);
-                    return;
-                }
-            }
-
-            if (messageText.includes('clear') || messageText.includes('reset')) {
-                setNodes([]);
-                setEdges([]);
-                updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: 'The canvas was cleared. Start a new workflow from the trigger node.' }]);
-                return;
-            }
-
-            let template: ReusableNodeTemplate | undefined = reusableHelperNodes.find(item =>
-                matchesTemplate(item.label, ['approval', 'approve', 'human', 'review']) ||
-                matchesTemplate(item.label, ['validation', 'check']) ||
-                matchesTemplate(item.label, ['wait', 'delay', 'pause']) ||
-                matchesTemplate(item.label, ['condition', 'branch', 'if']) ||
-                matchesTemplate(item.label, ['summary', 'output'])
+            const patch = await generateGraphPatch(
+                instruction,
+                { nodes: nodes as unknown as WorkflowNodeModel[], edges: edges as unknown as WorkflowEdge[] },
+                effectiveModel
             );
 
-            if (!template) {
-                const toolTemplate = reusableToolNodes.find(item =>
-                    item.label.toLowerCase().includes('gmail') && (messageText.includes('email') || messageText.includes('gmail')) ||
-                    item.label.toLowerCase().includes('slack') && messageText.includes('slack') ||
-                    item.label.toLowerCase().includes('sheet') && (messageText.includes('sheet') || messageText.includes('spreadsheet')) ||
-                    item.label.toLowerCase().includes('whatsapp') && messageText.includes('whatsapp') ||
-                    item.label.toLowerCase().includes('drive') && messageText.includes('drive')
-                );
-
-                template = toolTemplate || reusableHelperNodes.find(item => item.label.toLowerCase().includes('validation') || item.label.toLowerCase().includes('set variable')) || reusableHelperNodes[0];
-            }
-
-            if (!template) {
-                updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: 'No reusable step template is available to apply that change.' }]);
+            // An ambiguous instruction comes back as a question. Asking is the
+            // honest response; guessing is what produced the reported defect.
+            if (patch.operations.length === 0) {
+                updateActiveTaskMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: patch.clarification || 'I could not tell what to change. Can you say which step you mean?'
+                }]);
                 return;
             }
 
-            const newId = createNodeId(template.label || 'node');
-            const targetNode = selected || triggerNode;
-            const newNode: Node = {
-                id: newId,
-                type: template.nodeType === NodeType.TOOL ? 'tool' : template.nodeType === NodeType.LOGIC ? 'logic' : template.nodeType === NodeType.OUTPUT ? 'output' : 'ai_agent',
-                position: targetNode ? { x: targetNode.position.x + 220, y: targetNode.position.y + 100 } : { x: 420, y: 220 },
-                data: {
-                    label: template.label,
-                    type: template.nodeType,
-                    description: template.description,
-                    ...(template.toolId ? { toolId: template.toolId } : {}),
-                    ...(template.toolAction ? { toolAction: template.toolAction } : {}),
-                    stateContract: template.stateContract || { inputKeys: [], outputKeys: ['result'] }
-                }
-            };
-
-            setNodes(prev => [...prev, newNode]);
-            if (targetNode) {
-                setEdges(prev => [...prev, {
-                    id: `edge_${targetNode.id}_${newId}`,
-                    source: targetNode.id,
-                    target: newId,
-                    animated: true,
-                    style: { strokeWidth: 2, stroke: '#2dd4bf', strokeDasharray: '4,4' },
-                    markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }
-                } as Edge]);
+            // Removing or replacing a node loses its configuration, and canvas
+            // undo does not record history yet, so those are confirmed first.
+            if (isDestructive(patch)) {
+                setPendingPatch(patch);
+                updateActiveTaskMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: `${patch.summary || 'Here is what I would change.'}\nThis removes or replaces steps, so confirm it below before I apply it.`
+                }]);
+                return;
             }
 
-            setSelectedNodeId(newId);
-            updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: `Added “${template.label}” to the workflow and connected it to the active step.` }]);
+            applyGraphPatch(patch);
         } catch (error) {
-            updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: 'I could not apply that change. Try a simpler instruction like “Add approval before sending email”.' }]);
             console.error('Workflow chat edit failed:', error);
+            const detail = error instanceof PatchValidationError
+                ? `I could not turn that into a valid change:\n- ${error.issues.join('\n- ')}`
+                : error instanceof Error
+                    ? `I could not apply that change: ${error.message}`
+                    : 'I could not apply that change.';
+            updateActiveTaskMessages(prev => [...prev, { role: 'assistant', text: detail }]);
+        } finally {
+            setIsPatching(false);
         }
-    }, [activeTaskId, chatInput, nodes, reusableHelperNodes, reusableToolNodes, selectedNodeId, setNodes, setEdges, updateActiveTaskMessages]);
+    }, [activeTaskId, applyGraphPatch, chatInput, edges, effectiveModel, isPatching, nodes, updateActiveTaskMessages]);
 
     /**
      * Put the reviewed graph on the canvas.
@@ -2216,7 +2233,10 @@ export function WorkflowCanvas() {
                                             AI
                                         </div>
                                     )}
-                                    <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-[11px] leading-5 ${message.role === 'user' ? 'bg-bolt-accent text-black font-medium' : 'bg-white/[0.04] text-white/80 border border-white/5'}`}>
+                                    {/* pre-wrap: patch summaries and validation
+                                        issues are multi-line lists, and without it
+                                        they collapsed onto one unreadable line. */}
+                                    <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-[11px] leading-5 ${message.role === 'user' ? 'bg-bolt-accent text-black font-medium' : 'bg-white/[0.04] text-white/80 border border-white/5'}`}>
                                         {message.text}
                                     </div>
                                     {message.role === 'user' && (
@@ -2227,7 +2247,7 @@ export function WorkflowCanvas() {
                                 </div>
                             ))}
 
-                            {isGenerating && (
+                            {(isGenerating || isPatching) && (
                                 <div className="flex gap-2 justify-start">
                                     <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[9px] font-bold text-white/70">
                                         AI
@@ -2241,6 +2261,53 @@ export function WorkflowCanvas() {
                                             </span>
                                             thinking…
                                         </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* A patch that removes or replaces steps waits here.
+                                Every operation is listed by name so the user is
+                                agreeing to something specific, not to "apply". */}
+                            {pendingPatch && (
+                                <div
+                                    data-testid="pending-patch"
+                                    className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3"
+                                >
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-200">
+                                        Confirm this change
+                                    </p>
+                                    <ul className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                                        {pendingPatch.operations.map((operation, index) => (
+                                            <li key={index}>
+                                                {describeOperation(
+                                                    operation,
+                                                    nodes as unknown as WorkflowNodeModel[]
+                                                )}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <div className="mt-3 flex items-center gap-2">
+                                        <button
+                                            onClick={() => {
+                                                applyGraphPatch(pendingPatch);
+                                                setPendingPatch(null);
+                                            }}
+                                            className="rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-amber-300"
+                                        >
+                                            Apply
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setPendingPatch(null);
+                                                updateActiveTaskMessages(prev => [...prev, {
+                                                    role: 'assistant',
+                                                    text: 'Left the workflow as it was.'
+                                                }]);
+                                            }}
+                                            className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                                        >
+                                            Discard
+                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -2263,8 +2330,12 @@ export function WorkflowCanvas() {
                         />
                         <div className="mt-3 flex items-center justify-between gap-2">
                             <div className="text-[9px] text-white/35 uppercase tracking-[0.2em]">Prompt edit</div>
-                            <button onClick={handleWorkflowChatSubmit} className="px-3 py-2 rounded-xl bg-bolt-accent text-black text-[10px] font-bold uppercase tracking-[0.18em] hover:bg-bolt-accent/90">
-                                Send
+                            <button
+                                onClick={handleWorkflowChatSubmit}
+                                disabled={isPatching}
+                                className="px-3 py-2 rounded-xl bg-bolt-accent text-black text-[10px] font-bold uppercase tracking-[0.18em] hover:bg-bolt-accent/90 disabled:opacity-50"
+                            >
+                                {isPatching ? 'Working' : 'Send'}
                             </button>
                         </div>
                     </div>

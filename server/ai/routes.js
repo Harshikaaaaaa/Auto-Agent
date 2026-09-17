@@ -126,6 +126,8 @@ const patchRequestSchema = z.object({
   catalog: catalogSchema,
   provider: providerHintSchema,
   model: modelSchema,
+  /** Why the previous attempt was rejected. See `planRequestSchema`. */
+  repairFeedback: z.string().max(2000).optional(),
 });
 
 // Node execution carries live workflow state, which can be large.
@@ -251,9 +253,9 @@ export function setupAiRoutes(app) {
       const parsed = patchRequestSchema.safeParse(req.body);
       if (!parsed.success) return validationFailure(res, parsed.error);
 
-      const { message, graph, catalog, provider, model } = parsed.data;
+      const { message, graph, catalog, provider, model, repairFeedback } = parsed.data;
       const result = await callProviderForJson({
-        prompt: buildPatchPrompt({ message, graph, catalog }),
+        prompt: buildPatchPrompt({ message, graph, catalog, repairFeedback }),
         provider,
         model,
       });

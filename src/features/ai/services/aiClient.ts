@@ -140,6 +140,8 @@ export async function requestPatch(input: {
   catalog: CatalogTool[];
   provider?: AiProviderHint;
   model?: string;
+  /** Why the previous patch was rejected. Sent on a retry. */
+  repairFeedback?: string;
 }): Promise<{ patch: unknown; meta: AiCallMeta }> {
   return postJson('/api/ai/patch', input);
 }

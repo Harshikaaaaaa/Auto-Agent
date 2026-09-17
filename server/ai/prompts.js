@@ -175,7 +175,15 @@ Return ONLY a JSON object, no prose and no markdown fences:
  * The model returns operations, never a whole new graph, so an edit stays
  * reviewable as a diff and cannot silently discard the user's manual work.
  */
-export function buildPatchPrompt({ message, graph, catalog }) {
+export function buildPatchPrompt({ message, graph, catalog, repairFeedback }) {
+  // On a retry, say exactly what was wrong — and say it OUT HERE, in the
+  // instruction section. Appending it to the user message would bury it inside
+  // the untrusted fence, where the rules above tell the model to treat the
+  // contents as data and ignore any instructions in it.
+  const repairBlock = repairFeedback
+    ? `\n## YOUR PREVIOUS ANSWER WAS REJECTED\n${fence(repairFeedback)}\nFix precisely these problems. Everything else about the format stays the same.\n`
+    : '';
+
   const nodeList = (graph?.nodes ?? [])
     .map(
       (n, i) =>
@@ -191,6 +199,7 @@ export function buildPatchPrompt({ message, graph, catalog }) {
     .join('\n');
 
   return `You are editing an existing workflow graph. Translate the user's instruction into a minimal list of operations.
+${repairBlock}
 
 ${UNTRUSTED_NOTE}
 

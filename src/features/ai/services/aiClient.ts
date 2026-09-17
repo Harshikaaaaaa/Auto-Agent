@@ -1,6 +1,5 @@
 import { apiUrl } from '@config/api';
 import type { CatalogTool } from '@features/tools/toolRegistry';
-import type { Workflow } from '@features/workflow/types';
 import type { WorkflowContextBuffer } from '../types';
 
 /**
@@ -157,16 +156,6 @@ export async function requestNodeExecution(input: {
   model?: string;
 }): Promise<{ output: Record<string, unknown>; meta: AiCallMeta }> {
   return postJson('/api/ai/node', input);
-}
-
-/** LEGACY whole-graph generation. Superseded by `requestPlan` (Task 8). */
-export async function requestWorkflow(input: {
-  prompt: string;
-  catalog: CatalogTool[];
-  provider?: AiProviderHint;
-  model?: string;
-}): Promise<{ workflow: Workflow; meta: AiCallMeta }> {
-  return postJson('/api/ai/workflow', input);
 }
 
 /** Generate a dynamic connector definition. */

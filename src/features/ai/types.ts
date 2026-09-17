@@ -1,15 +1,4 @@
 
-export interface AIService {
-    generateWorkflow(prompt: string): Promise<any>;
-    executeNodeAction(
-        nodeLabel: string,
-        nodeDescription: string,
-        inputState: Record<string, any>,
-        outputKeys: string[],
-        contextBuffer?: WorkflowContextBuffer
-    ): Promise<Record<string, any>>;
-}
-
 /**
  * Context buffer that flows through the entire workflow execution,
  * giving each node full awareness of the workflow's state and history.

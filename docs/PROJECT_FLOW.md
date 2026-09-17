@@ -191,14 +191,14 @@ This project is not a single file. It is a collection of cooperating modules.
 
 ### 5.4 Workflow execution and persistence
 - `src/features/workflow/hooks/useWorkflowExecution.ts`
-  - main flow execution loop
-  - state merging, validation, and step handling
+  - the ONLY execution engine: the flow execution loop, state merging,
+    conditional routing, approval gates, and checkpointing
+  - a second LangGraph-based engine (`langgraphExecutor.ts`,
+    `checkpointManager.ts`, `useWorkflowExecutionLangGraph.ts`) was deleted; the
+    two had diverged and only this one was ever reachable from the UI
 
-- `src/features/workflow/services/checkpointManager.ts`
-  - local checkpointing and restore support
-
-- `src/features/workflow/services/langgraphExecutor.ts`
-  - graph-style execution orchestration
+- `src/features/workflow/services/safeExpression.ts`
+  - restricted evaluator for edge routing conditions
 
 - `src/features/workflow/services/workflowStorage.ts`
   - save, list, delete, and reload workflow graphs

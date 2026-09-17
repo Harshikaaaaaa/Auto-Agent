@@ -288,40 +288,6 @@ export function buildNodeExecutionPrompt({
   return prompt;
 }
 
-/**
- * Legacy full-graph generation prompt.
- *
- * Superseded by the plan flow (Task 8) but still reachable from older call
- * sites, so it is kept until those are removed.
- */
-export function buildWorkflowPrompt({ prompt, catalog }) {
-  return `You are an automation architect designing a stateful graph workflow.
-
-${UNTRUSTED_NOTE}
-
-## USER REQUEST
-${fence(prompt)}
-
-## AVAILABLE TOOLS
-${renderCatalog(catalog)}
-
-## RULES
-- A shared state object flows through the graph; each node reads inputKeys and writes outputKeys.
-- Node types: trigger, ai_agent, tool, logic, output.
-- The entry node has id "root" and y position 0. Lay the graph out top-down.
-- A node that performs an external action MUST set toolId and toolAction copied exactly from the catalog.
-- Never invent a tool. If no tool fits, use an ai_agent node and describe the gap in its description.
-- Edges from logic nodes may carry a "condition" expression over state keys.
-
-## OUTPUT
-Return ONLY JSON:
-{
-  "nodes": [{ "id": "root", "type": "trigger", "position": {"x":0,"y":0}, "data": { "label": "...", "type": "trigger", "description": "...", "toolId": null, "toolAction": null, "stateContract": { "inputKeys": [], "outputKeys": [] } } }],
-  "edges": [{ "id": "e1", "source": "root", "target": "...", "label": "", "condition": null }],
-  "initialState": {}
-}`;
-}
-
 /** Connector-definition prompt used by the dynamic connector factory. */
 export function buildConnectorPrompt({ toolName, toolDescription, requiredActions }) {
   return `You are an API connector designer. Define a connector for this tool.

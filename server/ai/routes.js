@@ -13,7 +13,6 @@ import {
   buildNodeExecutionPrompt,
   buildPatchPrompt,
   buildPlanPrompt,
-  buildWorkflowPrompt,
 } from './prompts.js';
 
 /**
@@ -159,13 +158,6 @@ const nodeRequestSchema = z.object({
   model: modelSchema,
 });
 
-const workflowRequestSchema = z.object({
-  prompt: z.string().min(1).max(8_000),
-  catalog: catalogSchema,
-  provider: providerHintSchema,
-  model: modelSchema,
-});
-
 const connectorRequestSchema = z.object({
   toolName: z.string().min(1).max(200),
   toolDescription: z.string().max(2_000).optional().default(''),
@@ -289,27 +281,6 @@ export function setupAiRoutes(app) {
 
       res.json({
         output: result.json,
-        meta: { provider: result.provider, model: result.model, attempts: result.attempts },
-      });
-    }),
-  );
-
-  /** LEGACY: whole-graph generation. Superseded by /api/ai/plan (Task 8). */
-  app.post(
-    '/api/ai/workflow',
-    handle(async (req, res) => {
-      const parsed = workflowRequestSchema.safeParse(req.body);
-      if (!parsed.success) return validationFailure(res, parsed.error);
-
-      const { prompt, catalog, provider, model } = parsed.data;
-      const result = await callProviderForJson({
-        prompt: buildWorkflowPrompt({ prompt, catalog }),
-        provider,
-        model,
-      });
-
-      res.json({
-        workflow: result.json,
         meta: { provider: result.provider, model: result.model, attempts: result.attempts },
       });
     }),

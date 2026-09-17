@@ -4,6 +4,7 @@ import { ExecutionLog, GraphState as FlowGenGraphState } from '@features/workflo
 import { executeNodeAction } from '@features/ai/services/aiService';
 import { WorkflowContextBuffer } from '@features/ai/types';
 import { getTool } from '@features/tools/toolRegistry';
+import { evaluateCondition as evaluateSafeCondition } from '@features/workflow/services/safeExpression';
 
 /**
  * LangGraph State Definition
@@ -252,19 +253,13 @@ function createLangGraphNode(
 }
 
 /**
- * Safely evaluates a condition expression against state data.
+ * Evaluates a condition expression against state data.
+ *
+ * Uses the restricted expression evaluator rather than `new Function`, which
+ * would execute stored conditions as real JavaScript. See `safeExpression.ts`.
  */
 function evaluateConditionExpr(condition: string, stateData: Record<string, any>): boolean {
-    try {
-        const keys = Object.keys(stateData);
-        const values = keys.map(k => stateData[k]);
-        // eslint-disable-next-line no-new-func
-        const fn = new Function(...keys, `"use strict"; return (${condition});`);
-        return Boolean(fn(...values));
-    } catch (err) {
-        console.warn(`[LangGraph Condition] Failed to evaluate "${condition}":`, err);
-        return false;
-    }
+    return evaluateSafeCondition(condition, stateData);
 }
 
 /**

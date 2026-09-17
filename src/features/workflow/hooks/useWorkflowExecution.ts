@@ -4,6 +4,7 @@ import { ExecutionLog, FlowEdge, GraphState } from '@features/workflow/types';
 import { executeNodeAction } from '@features/ai/services/aiService';
 import { WorkflowContextBuffer } from '@features/ai/types';
 import { getTool } from '@features/tools/toolRegistry';
+import { evaluateCondition as evaluateSafeCondition } from '@features/workflow/services/safeExpression';
 import '@features/tools/connectors'; // ensure all tools are registered
 
 const EXECUTION_CHECKPOINT_KEY = 'autoagent_runtime_checkpoint';
@@ -51,27 +52,18 @@ function clearRuntimeCheckpoint() {
 }
 
 /**
- * Safely evaluates a condition expression against graph state.
- * Supports simple expressions like "sentiment === 'positive'" or "score > 50".
- * Returns true if no condition is specified (unconditional edge).
+ * Evaluates an edge condition against graph state.
+ *
+ * Delegates to the restricted expression evaluator. This previously used
+ * `new Function`, which executed stored conditions as real JavaScript — and
+ * workflows load from shared server storage, so that was remote code execution
+ * in the browser. See `safeExpression.ts`.
+ *
+ * Returns true when no condition is specified (unconditional edge), and false
+ * when a condition cannot be parsed or evaluated (fail closed).
  */
 function evaluateCondition(condition: string | undefined, state: Record<string, any>): boolean {
-    if (!condition || condition.trim() === '') return true;
-
-    try {
-        // Build a safe evaluation context with only state keys
-        const { __metadata, ...cleanState } = state;
-        const keys = Object.keys(cleanState);
-        const values = keys.map(k => cleanState[k]);
-
-        // Create a function that has state keys as parameters
-        // eslint-disable-next-line no-new-func
-        const fn = new Function(...keys, `"use strict"; return (${condition});`);
-        return Boolean(fn(...values));
-    } catch (err) {
-        console.warn(`[Condition] Failed to evaluate "${condition}":`, err);
-        return false;
-    }
+    return evaluateSafeCondition(condition, state);
 }
 
 /**

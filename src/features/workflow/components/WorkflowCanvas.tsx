@@ -40,7 +40,8 @@ import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
 import { getTool, getAllTools, getToolCapabilityMatches } from '@features/tools/toolRegistry';
-import type { ReusableNodeTemplate } from '@features/workflow/types';
+import type { FlowEdge, ReusableNodeTemplate } from '@features/workflow/types';
+import { validateCondition } from '@features/workflow/services/safeExpression';
 import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
 import { saveWorkflow, loadWorkflow, listWorkflows, deleteWorkflow, SavedWorkflow } from '@features/workflow/services/workflowStorage';
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
@@ -1181,6 +1182,27 @@ export function WorkflowCanvas() {
             return {
                 valid: false,
                 message: `These workflow nodes are disconnected: ${orphanNodes.map(n => n.data.label || n.id).join(', ')}`
+            };
+        }
+
+        // Validate edge conditions before the run rather than discovering a bad
+        // one mid-execution. At run time an undecidable condition fails closed,
+        // which silently drops a branch — surfacing it here explains why instead.
+        const badConditions = (edges as FlowEdge[])
+            .map(edge => ({ edge, error: validateCondition(edge.condition ?? '') }))
+            .filter((entry): entry is { edge: FlowEdge; error: string } => entry.error !== null);
+
+        if (badConditions.length > 0) {
+            const details = badConditions
+                .map(({ edge, error }) => {
+                    const from = nodes.find(n => n.id === edge.source)?.data.label || edge.source;
+                    const to = nodes.find(n => n.id === edge.target)?.data.label || edge.target;
+                    return `"${from}" to "${to}": ${error}`;
+                })
+                .join('\n');
+            return {
+                valid: false,
+                message: `Some branch conditions are not valid, so those paths could never be taken:\n\n${details}`
             };
         }
 

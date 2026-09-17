@@ -45,7 +45,11 @@ export async function fetchSession(): Promise<SessionState> {
   if (response.status === 401) return SIGNED_OUT;
 
   if (!response.ok) {
-    throw new AuthError(`Could not read the session (${response.status}).`, response.status, 'session_failed');
+    throw new AuthError(
+      `Could not read the session (${response.status}).`,
+      response.status,
+      'session_failed',
+    );
   }
 
   const body = (await response.json()) as {

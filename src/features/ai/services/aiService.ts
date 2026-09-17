@@ -2,9 +2,9 @@ import { AI_CONFIG } from '../config';
 import type { WorkflowContextBuffer } from '../types';
 import { AiRequestError, requestNodeExecution } from './aiClient';
 import {
-    NodeExecutionError,
-    classifyFailureMessage,
-    type FailureKind
+  NodeExecutionError,
+  classifyFailureMessage,
+  type FailureKind,
 } from '@features/workflow/services/nodeFailure';
 import '@features/tools/connectors';
 
@@ -30,17 +30,17 @@ import '@features/tools/connectors';
 
 /** Provider the server should use, or 'auto' to let it decide. */
 function configuredProvider(): 'ollama' | 'gemini' | 'openrouter' {
-    return AI_CONFIG.provider;
+  return AI_CONFIG.provider;
 }
 
 /** Map a transport-level AI error onto the engine's failure taxonomy. */
 function kindForRequestError(error: AiRequestError): FailureKind {
-    if (error.status === 401 || error.status === 403) return 'auth';
-    if (error.status === 429) return 'rate_limit';
-    if (error.status === 400) return 'invalid_input';
-    // status 0 is "could not reach the server", which the client marks retryable.
-    if (error.retryable) return 'transient';
-    return classifyFailureMessage(error.message);
+  if (error.status === 401 || error.status === 403) return 'auth';
+  if (error.status === 429) return 'rate_limit';
+  if (error.status === 400) return 'invalid_input';
+  // status 0 is "could not reach the server", which the client marks retryable.
+  if (error.retryable) return 'transient';
+  return classifyFailureMessage(error.message);
 }
 
 /**
@@ -52,31 +52,31 @@ function kindForRequestError(error: AiRequestError): FailureKind {
  * that sentence as a summary. A run that did nothing looked successful.
  */
 export const executeNodeAction = async (
-    nodeLabel: string,
-    nodeDescription: string,
-    inputState: Record<string, unknown>,
-    outputKeys: string[],
-    contextBuffer?: WorkflowContextBuffer
+  nodeLabel: string,
+  nodeDescription: string,
+  inputState: Record<string, unknown>,
+  outputKeys: string[],
+  contextBuffer?: WorkflowContextBuffer,
 ): Promise<Record<string, unknown>> => {
-    const provider = configuredProvider();
+  const provider = configuredProvider();
 
-    try {
-        const { output } = await requestNodeExecution({
-            nodeLabel,
-            nodeDescription,
-            inputState,
-            outputKeys,
-            context: contextBuffer,
-            provider
-        });
-        return output;
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const kind =
-            error instanceof AiRequestError
-                ? kindForRequestError(error)
-                : classifyFailureMessage(message);
+  try {
+    const { output } = await requestNodeExecution({
+      nodeLabel,
+      nodeDescription,
+      inputState,
+      outputKeys,
+      context: contextBuffer,
+      provider,
+    });
+    return output;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const kind =
+      error instanceof AiRequestError
+        ? kindForRequestError(error)
+        : classifyFailureMessage(message);
 
-        throw new NodeExecutionError(`${nodeLabel}: ${message}`, { kind, cause: error });
-    }
+    throw new NodeExecutionError(`${nodeLabel}: ${message}`, { kind, cause: error });
+  }
 };

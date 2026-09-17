@@ -1,164 +1,172 @@
 import { Node, Edge } from 'reactflow';
 
 export interface ExportApproach {
-    id: string;
-    name: string;
-    example: string;
-    bestFor: string;
-    language: string;
-    extension: string;
-    pipInstall: string;
-    envVars: string[];
-    description: string;
-    generateCode: (context: WorkflowExportContext) => string;
+  id: string;
+  name: string;
+  example: string;
+  bestFor: string;
+  language: string;
+  extension: string;
+  pipInstall: string;
+  envVars: string[];
+  description: string;
+  generateCode: (context: WorkflowExportContext) => string;
 }
 
 export interface WorkflowExportContext {
-    title: string;
-    prompt?: string;
-    nodes: Node[];
-    edges: Edge[];
-    initialState?: Record<string, any>;
+  title: string;
+  prompt?: string;
+  nodes: Node[];
+  edges: Edge[];
+  initialState?: Record<string, any>;
 }
 
 interface ParsedNode {
-    id: string;
-    varName: string;
-    label: string;
-    description: string;
-    type: string;
-    toolId?: string;
-    toolAction?: string;
-    inputKeys: string[];
-    outputKeys: string[];
+  id: string;
+  varName: string;
+  label: string;
+  description: string;
+  type: string;
+  toolId?: string;
+  toolAction?: string;
+  inputKeys: string[];
+  outputKeys: string[];
 }
 
 function sanitizeIdentifier(name: string): string {
-    const clean = (name || 'step')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '');
-    return clean || 'step';
+  const clean = (name || 'step')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return clean || 'step';
 }
 
 function parseWorkflow(context: WorkflowExportContext): {
-    orderedNodes: ParsedNode[];
-    allInputKeys: string[];
-    allOutputKeys: string[];
-    stateKeys: string[];
+  orderedNodes: ParsedNode[];
+  allInputKeys: string[];
+  allOutputKeys: string[];
+  stateKeys: string[];
 } {
-    const { nodes, edges } = context;
+  const { nodes, edges } = context;
 
-    const inDegree = new Map<string, number>();
-    const adj = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+  const adj = new Map<string, string[]>();
 
-    nodes.forEach(n => {
-        inDegree.set(n.id, 0);
-        adj.set(n.id, []);
-    });
+  nodes.forEach((n) => {
+    inDegree.set(n.id, 0);
+    adj.set(n.id, []);
+  });
 
-    edges.forEach(e => {
-        if (inDegree.has(e.target)) {
-            inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-        }
-        if (adj.has(e.source)) {
-            adj.get(e.source)?.push(e.target);
-        }
-    });
-
-    const queue: string[] = [];
-    inDegree.forEach((degree, id) => {
-        if (degree === 0) queue.push(id);
-    });
-
-    const orderedIds: string[] = [];
-    while (queue.length > 0) {
-        const curr = queue.shift()!;
-        orderedIds.push(curr);
-        for (const neighbor of adj.get(curr) || []) {
-            const nextDegree = (inDegree.get(neighbor) || 1) - 1;
-            inDegree.set(neighbor, nextDegree);
-            if (nextDegree === 0) queue.push(neighbor);
-        }
+  edges.forEach((e) => {
+    if (inDegree.has(e.target)) {
+      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
     }
+    if (adj.has(e.source)) {
+      adj.get(e.source)?.push(e.target);
+    }
+  });
 
-    nodes.forEach(n => {
-        if (!orderedIds.includes(n.id)) orderedIds.push(n.id);
+  const queue: string[] = [];
+  inDegree.forEach((degree, id) => {
+    if (degree === 0) queue.push(id);
+  });
+
+  const orderedIds: string[] = [];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    orderedIds.push(curr);
+    for (const neighbor of adj.get(curr) || []) {
+      const nextDegree = (inDegree.get(neighbor) || 1) - 1;
+      inDegree.set(neighbor, nextDegree);
+      if (nextDegree === 0) queue.push(neighbor);
+    }
+  }
+
+  nodes.forEach((n) => {
+    if (!orderedIds.includes(n.id)) orderedIds.push(n.id);
+  });
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const parsedNodes: ParsedNode[] = orderedIds
+    .map((id) => nodeMap.get(id))
+    .filter(Boolean)
+    .map((n, idx) => {
+      const node = n!;
+      const label = node.data?.label || `Node_${idx + 1}`;
+      const stateContract = node.data?.stateContract || {};
+      const inputKeys: string[] = stateContract.inputKeys || [];
+      const outputKeys: string[] = stateContract.outputKeys || [];
+      const varName = `${sanitizeIdentifier(label)}_${idx + 1}`;
+
+      return {
+        id: node.id,
+        varName,
+        label,
+        description: node.data?.description || `Processes ${label} step in the workflow.`,
+        type: node.data?.type || node.type || 'ai_agent',
+        toolId: node.data?.toolId,
+        toolAction: node.data?.toolAction,
+        inputKeys,
+        outputKeys,
+      };
     });
 
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const parsedNodes: ParsedNode[] = orderedIds
-        .map(id => nodeMap.get(id))
-        .filter(Boolean)
-        .map((n, idx) => {
-            const node = n!;
-            const label = node.data?.label || `Node_${idx + 1}`;
-            const stateContract = node.data?.stateContract || {};
-            const inputKeys: string[] = stateContract.inputKeys || [];
-            const outputKeys: string[] = stateContract.outputKeys || [];
-            const varName = `${sanitizeIdentifier(label)}_${idx + 1}`;
+  const inputKeySet = new Set<string>();
+  const outputKeySet = new Set<string>();
 
-            return {
-                id: node.id,
-                varName,
-                label,
-                description: node.data?.description || `Processes ${label} step in the workflow.`,
-                type: node.data?.type || node.type || 'ai_agent',
-                toolId: node.data?.toolId,
-                toolAction: node.data?.toolAction,
-                inputKeys,
-                outputKeys
-            };
-        });
+  parsedNodes.forEach((pn) => {
+    pn.inputKeys.forEach((k) => inputKeySet.add(k));
+    pn.outputKeys.forEach((k) => outputKeySet.add(k));
+  });
 
-    const inputKeySet = new Set<string>();
-    const outputKeySet = new Set<string>();
+  const stateKeys = Array.from(new Set([...inputKeySet, ...outputKeySet]));
 
-    parsedNodes.forEach(pn => {
-        pn.inputKeys.forEach(k => inputKeySet.add(k));
-        pn.outputKeys.forEach(k => outputKeySet.add(k));
-    });
-
-    const stateKeys = Array.from(new Set([...inputKeySet, ...outputKeySet]));
-
-    return {
-        orderedNodes: parsedNodes,
-        allInputKeys: Array.from(inputKeySet),
-        allOutputKeys: Array.from(outputKeySet),
-        stateKeys: stateKeys.length > 0 ? stateKeys : ['input_query', 'extracted_data', 'analysis_summary', 'result']
-    };
+  return {
+    orderedNodes: parsedNodes,
+    allInputKeys: Array.from(inputKeySet),
+    allOutputKeys: Array.from(outputKeySet),
+    stateKeys:
+      stateKeys.length > 0
+        ? stateKeys
+        : ['input_query', 'extracted_data', 'analysis_summary', 'result'],
+  };
 }
 
 function escapePyString(str: string): string {
-    return (str || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  return (str || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
 // -------------------------------------------------------------
 // 1. RAW LLM API + PYTHON
 // -------------------------------------------------------------
 function generateRawLLM(ctx: WorkflowExportContext): string {
-    const { orderedNodes, stateKeys } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent Generated Workflow';
+  const { orderedNodes, stateKeys } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent Generated Workflow';
 
-    const nodeFunctions = orderedNodes.map(node => {
-        if (node.toolId) {
-            const outputDict = node.outputKeys.length > 0
-                ? node.outputKeys.map(k => `        "${k}": "${escapePyString(node.label)} result"`).join(',\n')
-                : '        "status": "success"';
+  const nodeFunctions = orderedNodes
+    .map((node) => {
+      if (node.toolId) {
+        const outputDict =
+          node.outputKeys.length > 0
+            ? node.outputKeys
+                .map((k) => `        "${k}": "${escapePyString(node.label)} result"`)
+                .join(',\n')
+            : '        "status": "success"';
 
-            return `# Tool step: ${node.label} (${node.toolId})
+        return `# Tool step: ${node.label} (${node.toolId})
 def ${node.varName}(state: Dict[str, Any]) -> Dict[str, Any]:
     print(f"Executing tool step: ${node.label}...")
     # Inputs: ${node.inputKeys.join(', ') || 'state'}
     return {
 ${outputDict}
     }`;
-        } else {
-            const fallbackOutput = node.outputKeys.length > 0
-                ? node.outputKeys.map(k => `"${k}": raw_output`).join(', ')
-                : '"output": raw_output';
+      } else {
+        const fallbackOutput =
+          node.outputKeys.length > 0
+            ? node.outputKeys.map((k) => `"${k}": raw_output`).join(', ')
+            : '"output": raw_output';
 
-            return `# Agent step: ${node.label}
+        return `# Agent step: ${node.label}
 def ${node.varName}(state: Dict[str, Any]) -> Dict[str, Any]:
     print(f"Executing agent step: ${node.label}...")
     system_prompt = (
@@ -173,19 +181,23 @@ def ${node.varName}(state: Dict[str, Any]) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {"result": raw_output}
     except Exception:
         return {${fallbackOutput}}`;
-        }
-    }).join('\n\n');
+      }
+    })
+    .join('\n\n');
 
-    const executionSteps = orderedNodes.map(node =>
+  const executionSteps = orderedNodes
+    .map(
+      (node) =>
         `    # Step: ${node.label}\n` +
         `    step_output = ${node.varName}(state)\n` +
         `    state.update(step_output)\n` +
-        `    print(f"✓ Completed: ${node.label}\\n")`
-    ).join('\n');
+        `    print(f"✓ Completed: ${node.label}\\n")`,
+    )
+    .join('\n');
 
-    const stateInitEntries = stateKeys.map(k => `        "${k}": "Sample ${k}"`).join(',\n');
+  const stateInitEntries = stateKeys.map((k) => `        "${k}": "Sample ${k}"`).join(',\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 1. Raw LLM API + Python
 Examples: OpenAI / Gemini / Claude SDKs
@@ -240,20 +252,24 @@ if __name__ == "__main__":
 // 2. GOOGLE ADK / GENAI
 // -------------------------------------------------------------
 function generateGoogleADK(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent Google ADK Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent Google ADK Workflow';
 
-    const toolDeclarations = orderedNodes.filter(n => n.toolId).map(n => {
-        const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
-        const params = n.inputKeys.map(k => `${k}: str = ""`).join(', ');
-        return `# Built-in tool declaration for ${n.label}
+  const toolDeclarations = orderedNodes
+    .filter((n) => n.toolId)
+    .map((n) => {
+      const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
+      const params = n.inputKeys.map((k) => `${k}: str = ""`).join(', ');
+      return `# Built-in tool declaration for ${n.label}
 def ${fnName}(${params}) -> str:
     """Executes ${n.label} in the Google workspace/ecosystem."""
     return "Executed ${n.toolId} action ${n.toolAction} successfully."`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const stepMethods = orderedNodes.map(node => {
-        return `    def step_${node.varName}(self, input_context: dict) -> dict:
+  const stepMethods = orderedNodes
+    .map((node) => {
+      return `    def step_${node.varName}(self, input_context: dict) -> dict:
         print(f"-> Running step: ${node.label}")
         system_instruction = (
             "You are an agent in a structured Google workflow.\\n"
@@ -274,13 +290,17 @@ def ${fnName}(${params}) -> str:
             return json.loads(response.text)
         except Exception:
             return {"raw_text": response.text}`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const executionSteps = orderedNodes.map(node =>
-        `        step_result = self.step_${node.varName}(self.state)\n        self.state.update(step_result)`
-    ).join('\n');
+  const executionSteps = orderedNodes
+    .map(
+      (node) =>
+        `        step_result = self.step_${node.varName}(self.state)\n        self.state.update(step_result)`,
+    )
+    .join('\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 2. Google ADK / Gemini GenAI SDK
 Examples: Gemini + ADK (Agent Development Kit)
@@ -325,20 +345,24 @@ if __name__ == "__main__":
 // 3. LANGCHAIN
 // -------------------------------------------------------------
 function generateLangChain(ctx: WorkflowExportContext): string {
-    const { orderedNodes, stateKeys } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent LangChain Workflow';
+  const { orderedNodes, stateKeys } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent LangChain Workflow';
 
-    const toolsDef = orderedNodes.filter(n => n.toolId).map(n => {
-        const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
-        const params = n.inputKeys.map(k => `${k}: str = ""`).join(', ');
-        return `@tool
+  const toolsDef = orderedNodes
+    .filter((n) => n.toolId)
+    .map((n) => {
+      const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
+      const params = n.inputKeys.map((k) => `${k}: str = ""`).join(', ');
+      return `@tool
 def ${fnName}(${params}) -> str:
     """Tool: ${n.label}. ${escapePyString(n.description)}"""
     return "Successfully executed ${n.label}"`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const chainDefs = orderedNodes.map(node => {
-        return `def create_${node.varName}_chain():
+  const chainDefs = orderedNodes
+    .map((node) => {
+      return `def create_${node.varName}_chain():
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are an automated step in a LangChain workflow.\\n"
                    "Step: ${node.label}\\n"
@@ -347,21 +371,25 @@ def ${fnName}(${params}) -> str:
         ("human", "Current State:\\n{state_json}")
     ])
     return prompt | llm | JsonOutputParser()`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const chainExecution = orderedNodes.map(node =>
+  const chainExecution = orderedNodes
+    .map(
+      (node) =>
         `    print("Executing: ${node.label}")\n` +
         `    chain_${node.varName} = create_${node.varName}_chain()\n` +
         `    step_res = chain_${node.varName}.invoke({"state_json": str(state)})\n` +
         `    if isinstance(step_res, dict):\n` +
         `        state.update(step_res)\n` +
         `    else:\n` +
-        `        state["${node.outputKeys[0] || 'result'}"] = step_res`
-    ).join('\n\n');
+        `        state["${node.outputKeys[0] || 'result'}"] = step_res`,
+    )
+    .join('\n\n');
 
-    const stateInitEntries = stateKeys.map(k => `        "${k}": ""`).join(',\n');
+  const stateInitEntries = stateKeys.map((k) => `        "${k}": ""`).join(',\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 3. LangChain
 Examples: LangChain + LCEL + Tools + RAG
@@ -411,24 +439,27 @@ if __name__ == "__main__":
 // 4. LANGGRAPH
 // -------------------------------------------------------------
 function generateLangGraph(ctx: WorkflowExportContext): string {
-    const { orderedNodes, stateKeys } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent LangGraph Workflow';
+  const { orderedNodes, stateKeys } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent LangGraph Workflow';
 
-    const nodeFunctions = orderedNodes.map(node => {
-        if (node.toolId) {
-            const ret = node.outputKeys.length > 0
-                ? node.outputKeys.map(k => `        "${k}": "${node.label} completed"`).join(',\n')
-                : '        "status": "done"';
-            return `def ${node.varName}_node(state: WorkflowState) -> Dict[str, Any]:
+  const nodeFunctions = orderedNodes
+    .map((node) => {
+      if (node.toolId) {
+        const ret =
+          node.outputKeys.length > 0
+            ? node.outputKeys.map((k) => `        "${k}": "${node.label} completed"`).join(',\n')
+            : '        "status": "done"';
+        return `def ${node.varName}_node(state: WorkflowState) -> Dict[str, Any]:
     print(f"Executing LangGraph node: ${node.label}")
     return {
 ${ret}
     }`;
-        } else {
-            const ret = node.outputKeys.length > 0
-                ? node.outputKeys.map(k => `        "${k}": response.content`).join(',\n')
-                : '        "result": response.content';
-            return `def ${node.varName}_node(state: WorkflowState) -> Dict[str, Any]:
+      } else {
+        const ret =
+          node.outputKeys.length > 0
+            ? node.outputKeys.map((k) => `        "${k}": response.content`).join(',\n')
+            : '        "result": response.content';
+        return `def ${node.varName}_node(state: WorkflowState) -> Dict[str, Any]:
     print(f"Executing LangGraph node: ${node.label}")
     prompt = (
         "Execute node '${node.label}'.\\n"
@@ -442,22 +473,27 @@ ${ret}
     return {
 ${ret}
     }`;
-        }
-    }).join('\n\n');
+      }
+    })
+    .join('\n\n');
 
-    const addNodes = orderedNodes.map(n => `    builder.add_node("${n.varName}", ${n.varName}_node)`).join('\n');
-    const addEdges = orderedNodes.map((node, idx) => {
-        if (idx < orderedNodes.length - 1) {
-            return `    builder.add_edge("${node.varName}", "${orderedNodes[idx + 1].varName}")`;
-        } else {
-            return `    builder.add_edge("${node.varName}", END)`;
-        }
-    }).join('\n');
+  const addNodes = orderedNodes
+    .map((n) => `    builder.add_node("${n.varName}", ${n.varName}_node)`)
+    .join('\n');
+  const addEdges = orderedNodes
+    .map((node, idx) => {
+      if (idx < orderedNodes.length - 1) {
+        return `    builder.add_edge("${node.varName}", "${orderedNodes[idx + 1].varName}")`;
+      } else {
+        return `    builder.add_edge("${node.varName}", END)`;
+      }
+    })
+    .join('\n');
 
-    const stateTypeEntries = stateKeys.map(k => `    ${k}: Any`).join('\n');
-    const stateInitEntries = stateKeys.map(k => `        "${k}": "Initial ${k}"`).join(',\n');
+  const stateTypeEntries = stateKeys.map((k) => `    ${k}: Any`).join('\n');
+  const stateInitEntries = stateKeys.map((k) => `        "${k}": "Initial ${k}"`).join(',\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 4. LangGraph
 Examples: Graph/State-based agents
@@ -512,19 +548,22 @@ ${stateInitEntries},
 // 5. OPENAI AGENTS SDK
 // -------------------------------------------------------------
 function generateOpenAIAgents(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent OpenAI Agents Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent OpenAI Agents Workflow';
 
-    const prompts = orderedNodes.map(node => {
-        return `AGENT_${node.varName.toUpperCase()}_PROMPT = """
+  const prompts = orderedNodes
+    .map((node) => {
+      return `AGENT_${node.varName.toUpperCase()}_PROMPT = """
 You are a specialist agent for: ${node.label}
 Objective: ${escapePyString(node.description)}
 Expected output fields: ${node.outputKeys.join(', ') || 'result'}
 """.strip()`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const runMethods = orderedNodes.map((node, idx) => {
-        return `    def run_${node.varName}(self, state_input: dict) -> dict:
+  const runMethods = orderedNodes
+    .map((node, idx) => {
+      return `    def run_${node.varName}(self, state_input: dict) -> dict:
         print(f"[Agent ${idx + 1}] Invoking ${node.label}...")
         completion = client.chat.completions.create(
             model="gpt-4o",
@@ -537,13 +576,17 @@ Expected output fields: ${node.outputKeys.join(', ') || 'result'}
         return {
             "${node.outputKeys[0] || 'result'}": output_text
         }`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const kickoffSteps = orderedNodes.map(node =>
-        `        res_${node.varName} = self.run_${node.varName}(self.context)\n        self.context.update(res_${node.varName})`
-    ).join('\n');
+  const kickoffSteps = orderedNodes
+    .map(
+      (node) =>
+        `        res_${node.varName} = self.run_${node.varName}(self.context)\n        self.context.update(res_${node.varName})`,
+    )
+    .join('\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 5. OpenAI Agents SDK
 Examples: Agents + tools + handoffs
@@ -582,29 +625,35 @@ if __name__ == "__main__":
 // 6. CREWAI
 // -------------------------------------------------------------
 function generateCrewAI(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent CrewAI Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent CrewAI Workflow';
 
-    const toolsDef = orderedNodes.filter(n => n.toolId).map(n => {
-        const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
-        return `@tool
+  const toolsDef = orderedNodes
+    .filter((n) => n.toolId)
+    .map((n) => {
+      const fnName = `${sanitizeIdentifier(n.toolId || 'tool')}_${sanitizeIdentifier(n.toolAction || 'action')}`;
+      return `@tool
 def ${fnName}(argument: str) -> str:
     """Tool for ${n.label}: ${escapePyString(n.description)}"""
     return f"Completed ${n.label} with {argument}"`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const agentsDef = orderedNodes.map(node => {
-        return `agent_${node.varName} = Agent(
+  const agentsDef = orderedNodes
+    .map((node) => {
+      return `agent_${node.varName} = Agent(
     role="${node.label} Specialist",
     goal="${escapePyString(node.description)}",
     backstory="You are an expert autonomous agent specializing in ${node.label.toLowerCase()}.",
     verbose=True,
     memory=True
 )`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const tasksDef = orderedNodes.map(node => {
-        return `task_${node.varName} = Task(
+  const tasksDef = orderedNodes
+    .map((node) => {
+      return `task_${node.varName} = Task(
     description=(
         "Execute ${node.label}.\\n"
         "Details: ${escapePyString(node.description)}\\n"
@@ -613,12 +662,13 @@ def ${fnName}(argument: str) -> str:
     expected_output="Structured summary containing: ${node.outputKeys.join(', ') || 'task outcome'}",
     agent=agent_${node.varName}
 )`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const agentList = orderedNodes.map(n => `        agent_${n.varName}`).join(',\n');
-    const taskList = orderedNodes.map(n => `        task_${n.varName}`).join(',\n');
+  const agentList = orderedNodes.map((n) => `        agent_${n.varName}`).join(',\n');
+  const taskList = orderedNodes.map((n) => `        task_${n.varName}`).join(',\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 6. CrewAI
 Examples: Agents + Tasks + Crews
@@ -661,11 +711,12 @@ if __name__ == "__main__":
 // 7. AUTOGEN
 // -------------------------------------------------------------
 function generateAutoGen(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent AutoGen Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent AutoGen Workflow';
 
-    const agentsDef = orderedNodes.map(node => {
-        return `agent_${node.varName} = autogen.AssistantAgent(
+  const agentsDef = orderedNodes
+    .map((node) => {
+      return `agent_${node.varName} = autogen.AssistantAgent(
     name="${node.varName.replace(/[^a-zA-Z0-9_]/g, '')}",
     system_message=(
         "You are the specialist agent for: ${node.label}.\\n"
@@ -675,12 +726,13 @@ function generateAutoGen(ctx: WorkflowExportContext): string {
     ),
     llm_config=llm_config
 )`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const agentList = orderedNodes.map(n => `        agent_${n.varName}`).join(',\n');
-    const stepList = orderedNodes.map((n, i) => `${i + 1}. ${n.label}`).join('\\n');
+  const agentList = orderedNodes.map((n) => `        agent_${n.varName}`).join(',\n');
+  const stepList = orderedNodes.map((n, i) => `${i + 1}. ${n.label}`).join('\\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 7. AutoGen (Microsoft)
 Examples: ConversableAgent / AssistantAgent / GroupChat
@@ -738,27 +790,33 @@ if __name__ == "__main__":
 // 8. LLAMAINDEX
 // -------------------------------------------------------------
 function generateLlamaIndex(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent LlamaIndex Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent LlamaIndex Workflow';
 
-    const eventsDef = orderedNodes.map(node => {
-        const clsName = node.varName.charAt(0).toUpperCase() + node.varName.slice(1) + 'Event';
-        return `class ${clsName}(Event):
+  const eventsDef = orderedNodes
+    .map((node) => {
+      const clsName = node.varName.charAt(0).toUpperCase() + node.varName.slice(1) + 'Event';
+      return `class ${clsName}(Event):
     payload: Dict[str, Any]`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const stepMethods = orderedNodes.map((node, idx) => {
-        const currentEventClass = node.varName.charAt(0).toUpperCase() + node.varName.slice(1) + 'Event';
-        const isLast = idx === orderedNodes.length - 1;
-        const nextEventClass = isLast
-            ? 'StopEvent'
-            : orderedNodes[idx + 1].varName.charAt(0).toUpperCase() + orderedNodes[idx + 1].varName.slice(1) + 'Event';
+  const stepMethods = orderedNodes
+    .map((node, idx) => {
+      const currentEventClass =
+        node.varName.charAt(0).toUpperCase() + node.varName.slice(1) + 'Event';
+      const isLast = idx === orderedNodes.length - 1;
+      const nextEventClass = isLast
+        ? 'StopEvent'
+        : orderedNodes[idx + 1].varName.charAt(0).toUpperCase() +
+          orderedNodes[idx + 1].varName.slice(1) +
+          'Event';
 
-        const retStatement = isLast
-            ? 'return StopEvent(result=updated_payload)'
-            : `return ${nextEventClass}(payload=updated_payload)`;
+      const retStatement = isLast
+        ? 'return StopEvent(result=updated_payload)'
+        : `return ${nextEventClass}(payload=updated_payload)`;
 
-        return `    @step
+      return `    @step
     async def step_${node.varName}(self, ev: ${currentEventClass}, ctx: Context) -> ${nextEventClass}:
         print(f"LlamaIndex step: ${node.label}")
         data = ev.payload
@@ -771,12 +829,18 @@ function generateLlamaIndex(ctx: WorkflowExportContext): string {
         response = await self.llm.acomplete(prompt)
         updated_payload = {**data, "${node.outputKeys[0] || 'result'}": str(response)}
         ${retStatement}`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const firstEventClass = (orderedNodes[0]?.varName || 'start').charAt(0).toUpperCase() + (orderedNodes[0]?.varName || 'start').slice(1) + 'Event';
-    const wfClassName = sanitizeIdentifier(title).replace(/(^|_)([a-z])/g, (_full, _sep, b) => b.toUpperCase()) + 'Workflow';
+  const firstEventClass =
+    (orderedNodes[0]?.varName || 'start').charAt(0).toUpperCase() +
+    (orderedNodes[0]?.varName || 'start').slice(1) +
+    'Event';
+  const wfClassName =
+    sanitizeIdentifier(title).replace(/(^|_)([a-z])/g, (_full, _sep, b) => b.toUpperCase()) +
+    'Workflow';
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 8. LlamaIndex
 Examples: LlamaIndex Workflows (Event-driven)
@@ -825,30 +889,35 @@ if __name__ == "__main__":
 // 9. SEMANTIC KERNEL
 // -------------------------------------------------------------
 function generateSemanticKernel(ctx: WorkflowExportContext): string {
-    const { orderedNodes } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent Semantic Kernel Workflow';
+  const { orderedNodes } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent Semantic Kernel Workflow';
 
-    const pluginFunctions = orderedNodes.map(node => {
-        return `    @kernel_function(
+  const pluginFunctions = orderedNodes
+    .map((node) => {
+      return `    @kernel_function(
         name="${node.varName}",
         description="${escapePyString(node.description)}"
     )
     def ${node.varName}(self, context: str) -> str:
         print(f"Executing Semantic Kernel plugin function: ${node.label}")
         return f"Completed ${node.label} step for context: {context[:60]}..."`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const pipelineSteps = orderedNodes.map(node =>
+  const pipelineSteps = orderedNodes
+    .map(
+      (node) =>
         `    # Step: ${node.label}\n` +
         `    result_${node.varName} = await kernel.invoke(\n` +
         `        plugin["${node.varName}"],\n` +
         `        context=current_context\n` +
         `    )\n` +
         `    print(f"✓ ${node.label}: {result_${node.varName}}")\n` +
-        `    current_context = str(result_${node.varName})`
-    ).join('\n\n');
+        `    current_context = str(result_${node.varName})`,
+    )
+    .join('\n\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 9. Semantic Kernel (Microsoft)
 Examples: Semantic Kernel Python SDK
@@ -897,32 +966,40 @@ if __name__ == "__main__":
 // 10. CUSTOM AGENT FRAMEWORK
 // -------------------------------------------------------------
 function generateCustomAgent(ctx: WorkflowExportContext): string {
-    const { orderedNodes, stateKeys } = parseWorkflow(ctx);
-    const title = ctx.title || 'AutoAgent Custom Framework Workflow';
+  const { orderedNodes, stateKeys } = parseWorkflow(ctx);
+  const title = ctx.title || 'AutoAgent Custom Framework Workflow';
 
-    const stepFunctions = orderedNodes.map(node => {
-        const ret = node.outputKeys.length > 0
-            ? node.outputKeys.map(k => `        "${k}": "${node.label} output"`).join(',\n')
-            : '        "status": "success"';
+  const stepFunctions = orderedNodes
+    .map((node) => {
+      const ret =
+        node.outputKeys.length > 0
+          ? node.outputKeys.map((k) => `        "${k}": "${node.label} output"`).join(',\n')
+          : '        "status": "success"';
 
-        return `def step_${node.varName}(state: WorkflowState) -> Dict[str, Any]:
+      return `def step_${node.varName}(state: WorkflowState) -> Dict[str, Any]:
     # Description: ${escapePyString(node.description)}
     return {
 ${ret}
     }`;
-    }).join('\n\n');
+    })
+    .join('\n\n');
 
-    const registerSteps = orderedNodes.map(node =>
+  const registerSteps = orderedNodes
+    .map(
+      (node) =>
         `    engine.add_step(WorkflowNode(\n` +
         `        id="${node.id}",\n` +
         `        name="${node.label}",\n` +
         `        action=step_${node.varName}\n` +
-        `    ))`
-    ).join('\n');
+        `    ))`,
+    )
+    .join('\n');
 
-    const stateInitEntries = stateKeys.map(k => `        "${k}": "Initial value for ${k}"`).join(',\n');
+  const stateInitEntries = stateKeys
+    .map((k) => `        "${k}": "Initial value for ${k}"`)
+    .join(',\n');
 
-    return `"""
+  return `"""
 Workflow: ${title}
 Approach: 10. Custom Agent Framework
 Examples: Python + your own orchestration
@@ -1006,145 +1083,158 @@ ${stateInitEntries},
 // EXPORT CATALOG OF THE 10 APPROACHES
 // -------------------------------------------------------------
 export const EXPORT_APPROACHES: ExportApproach[] = [
-    {
-        id: 'raw_llm',
-        name: '1. Raw LLM API + Python',
-        example: 'OpenAI / Gemini / Claude SDKs',
-        bestFor: 'Learning fundamentals, simple agents',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install openai google-genai anthropic',
-        envVars: ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY'],
-        description: 'Direct model calls using native Python SDKs without heavy framework overhead. Clean, transparent, and easy to debug.',
-        generateCode: generateRawLLM
-    },
-    {
-        id: 'google_adk',
-        name: '2. Google ADK',
-        example: 'Gemini + ADK',
-        bestFor: 'Google ecosystem, multi-agent systems',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install google-genai',
-        envVars: ['GEMINI_API_KEY'],
-        description: 'Google Agent Development Kit and Gemini GenAI SDK with native tool calling, multimodal support, and Workspace integration.',
-        generateCode: generateGoogleADK
-    },
-    {
-        id: 'langchain',
-        name: '3. LangChain',
-        example: 'LangChain + tools + RAG',
-        bestFor: 'General GenAI applications',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install langchain langchain-openai langchain-core',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Standard enterprise GenAI framework using LangChain Expression Language (LCEL), tool abstractions, and prompt templates.',
-        generateCode: generateLangChain
-    },
-    {
-        id: 'langgraph',
-        name: '4. LangGraph',
-        example: 'Graph/state-based agents',
-        bestFor: 'Complex production agents',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install langgraph langchain-openai langchain-core',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Stateful, cyclical multi-agent graph runtime with checkpoints, human-in-the-loop gates, and deterministic step transitions.',
-        generateCode: generateLangGraph
-    },
-    {
-        id: 'openai_agents',
-        name: '5. OpenAI Agents SDK',
-        example: 'Agents + tools + handoffs',
-        bestFor: 'OpenAI-based agent systems',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install openai',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'OpenAI agent design with specialist agent routines, function calling, and dynamic handoffs between agents.',
-        generateCode: generateOpenAIAgents
-    },
-    {
-        id: 'crewai',
-        name: '6. CrewAI',
-        example: 'Agents + tasks + crews',
-        bestFor: 'Multi-agent workflows',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install crewai crewai-tools',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Role-playing multi-agent architecture where autonomous agents collaborate sequentially or hierarchically on assigned tasks.',
-        generateCode: generateCrewAI
-    },
-    {
-        id: 'autogen',
-        name: '7. AutoGen',
-        example: 'Microsoft AutoGen',
-        bestFor: 'Multi-agent conversations',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install pyautogen',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Microsoft conversational multi-agent framework featuring AssistantAgent, UserProxyAgent, and multi-agent group chats.',
-        generateCode: generateAutoGen
-    },
-    {
-        id: 'llamaindex',
-        name: '8. LlamaIndex',
-        example: 'Agents + RAG + data',
-        bestFor: 'Data/document-heavy agents',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install llama-index llama-index-core llama-index-llms-openai',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Event-driven workflow system optimized for document processing, semantic retrieval, vector search, and structured data pipelines.',
-        generateCode: generateLlamaIndex
-    },
-    {
-        id: 'semantic_kernel',
-        name: '9. Semantic Kernel',
-        example: 'Microsoft ecosystem',
-        bestFor: 'Enterprise AI applications',
-        language: 'python',
-        extension: 'py',
-        pipInstall: 'pip install semantic-kernel',
-        envVars: ['OPENAI_API_KEY'],
-        description: 'Microsoft enterprise SDK integrating LLMs with native code plugins, connectors, and enterprise orchestration pipelines.',
-        generateCode: generateSemanticKernel
-    },
-    {
-        id: 'custom_agent',
-        name: '10. Custom Agent Framework',
-        example: 'Python + your own orchestration',
-        bestFor: 'Maximum control',
-        language: 'python',
-        extension: 'py',
-        pipInstall: '# No external frameworks required! Pure Python stdlib',
-        envVars: [],
-        description: 'Pure Python orchestration with zero third-party agent dependencies. Complete control over memory, logging, retries, and state.',
-        generateCode: generateCustomAgent
-    }
+  {
+    id: 'raw_llm',
+    name: '1. Raw LLM API + Python',
+    example: 'OpenAI / Gemini / Claude SDKs',
+    bestFor: 'Learning fundamentals, simple agents',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install openai google-genai anthropic',
+    envVars: ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY'],
+    description:
+      'Direct model calls using native Python SDKs without heavy framework overhead. Clean, transparent, and easy to debug.',
+    generateCode: generateRawLLM,
+  },
+  {
+    id: 'google_adk',
+    name: '2. Google ADK',
+    example: 'Gemini + ADK',
+    bestFor: 'Google ecosystem, multi-agent systems',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install google-genai',
+    envVars: ['GEMINI_API_KEY'],
+    description:
+      'Google Agent Development Kit and Gemini GenAI SDK with native tool calling, multimodal support, and Workspace integration.',
+    generateCode: generateGoogleADK,
+  },
+  {
+    id: 'langchain',
+    name: '3. LangChain',
+    example: 'LangChain + tools + RAG',
+    bestFor: 'General GenAI applications',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install langchain langchain-openai langchain-core',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Standard enterprise GenAI framework using LangChain Expression Language (LCEL), tool abstractions, and prompt templates.',
+    generateCode: generateLangChain,
+  },
+  {
+    id: 'langgraph',
+    name: '4. LangGraph',
+    example: 'Graph/state-based agents',
+    bestFor: 'Complex production agents',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install langgraph langchain-openai langchain-core',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Stateful, cyclical multi-agent graph runtime with checkpoints, human-in-the-loop gates, and deterministic step transitions.',
+    generateCode: generateLangGraph,
+  },
+  {
+    id: 'openai_agents',
+    name: '5. OpenAI Agents SDK',
+    example: 'Agents + tools + handoffs',
+    bestFor: 'OpenAI-based agent systems',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install openai',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'OpenAI agent design with specialist agent routines, function calling, and dynamic handoffs between agents.',
+    generateCode: generateOpenAIAgents,
+  },
+  {
+    id: 'crewai',
+    name: '6. CrewAI',
+    example: 'Agents + tasks + crews',
+    bestFor: 'Multi-agent workflows',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install crewai crewai-tools',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Role-playing multi-agent architecture where autonomous agents collaborate sequentially or hierarchically on assigned tasks.',
+    generateCode: generateCrewAI,
+  },
+  {
+    id: 'autogen',
+    name: '7. AutoGen',
+    example: 'Microsoft AutoGen',
+    bestFor: 'Multi-agent conversations',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install pyautogen',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Microsoft conversational multi-agent framework featuring AssistantAgent, UserProxyAgent, and multi-agent group chats.',
+    generateCode: generateAutoGen,
+  },
+  {
+    id: 'llamaindex',
+    name: '8. LlamaIndex',
+    example: 'Agents + RAG + data',
+    bestFor: 'Data/document-heavy agents',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install llama-index llama-index-core llama-index-llms-openai',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Event-driven workflow system optimized for document processing, semantic retrieval, vector search, and structured data pipelines.',
+    generateCode: generateLlamaIndex,
+  },
+  {
+    id: 'semantic_kernel',
+    name: '9. Semantic Kernel',
+    example: 'Microsoft ecosystem',
+    bestFor: 'Enterprise AI applications',
+    language: 'python',
+    extension: 'py',
+    pipInstall: 'pip install semantic-kernel',
+    envVars: ['OPENAI_API_KEY'],
+    description:
+      'Microsoft enterprise SDK integrating LLMs with native code plugins, connectors, and enterprise orchestration pipelines.',
+    generateCode: generateSemanticKernel,
+  },
+  {
+    id: 'custom_agent',
+    name: '10. Custom Agent Framework',
+    example: 'Python + your own orchestration',
+    bestFor: 'Maximum control',
+    language: 'python',
+    extension: 'py',
+    pipInstall: '# No external frameworks required! Pure Python stdlib',
+    envVars: [],
+    description:
+      'Pure Python orchestration with zero third-party agent dependencies. Complete control over memory, logging, retries, and state.',
+    generateCode: generateCustomAgent,
+  },
 ];
 
 export function getExportApproach(id: string): ExportApproach | undefined {
-    return EXPORT_APPROACHES.find(a => a.id === id);
+  return EXPORT_APPROACHES.find((a) => a.id === id);
 }
 
-export function exportWorkflowCode(approachId: string, context: WorkflowExportContext): {
-    approach: ExportApproach;
-    filename: string;
-    code: string;
+export function exportWorkflowCode(
+  approachId: string,
+  context: WorkflowExportContext,
+): {
+  approach: ExportApproach;
+  filename: string;
+  code: string;
 } {
-    const approach = getExportApproach(approachId) || EXPORT_APPROACHES[0];
-    const safeTitle = sanitizeIdentifier(context.title || 'workflow');
-    const filename = `${safeTitle}_${approach.id}.${approach.extension}`;
-    const code = approach.generateCode(context);
+  const approach = getExportApproach(approachId) || EXPORT_APPROACHES[0];
+  const safeTitle = sanitizeIdentifier(context.title || 'workflow');
+  const filename = `${safeTitle}_${approach.id}.${approach.extension}`;
+  const code = approach.generateCode(context);
 
-    return {
-        approach,
-        filename,
-        code
-    };
+  return {
+    approach,
+    filename,
+    code,
+  };
 }

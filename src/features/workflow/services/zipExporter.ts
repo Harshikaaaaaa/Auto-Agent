@@ -11,7 +11,12 @@ export interface ZipProjectTemplate {
 }
 
 function sanitize(name: string): string {
-  return (name || 'my_agent').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'my_agent';
+  return (
+    (name || 'my_agent')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'my_agent'
+  );
 }
 
 // ─── 1. Raw LLM API + Python ─────────────────────────────────────────────────
@@ -63,7 +68,8 @@ export function buildGoogleADKZip(_ctx: WorkflowExportContext, code: string): Zi
     files: {
       'agent.py': code,
       '.env': 'GEMINI_API_KEY=your_gemini_api_key_here\n',
-      '__init__.py': 'from .agent import WorkflowOrchestrator\n\n__all__ = ["WorkflowOrchestrator"]\n',
+      '__init__.py':
+        'from .agent import WorkflowOrchestrator\n\n__all__ = ["WorkflowOrchestrator"]\n',
     },
   };
 }
@@ -86,15 +92,18 @@ export function buildLangChainZip(ctx: WorkflowExportContext, code: string): Zip
     rootFolder: name,
     files: {
       'src/chains/workflow.py': code,
-      'src/chains/__init__.py': 'from .workflow import run_langchain_workflow\n\n__all__ = ["run_langchain_workflow"]\n',
+      'src/chains/__init__.py':
+        'from .workflow import run_langchain_workflow\n\n__all__ = ["run_langchain_workflow"]\n',
       'src/tools/__init__.py': '# Place your custom @tool definitions here\n',
       'src/prompts/__init__.py': '# Place your reusable ChatPromptTemplate definitions here\n',
       'src/utils/__init__.py': '# Helper utilities\n',
       'src/main.py': `"""Entry point"""\nfrom src.chains.workflow import run_langchain_workflow\n\nif __name__ == "__main__":\n    result = run_langchain_workflow()\n    import json\n    print(json.dumps(result, indent=2))\n`,
-      '.env': 'OPENAI_API_KEY=sk-your-openai-api-key-here\nLANGSMITH_API_KEY=\nLANGSMITH_TRACING=false\n',
+      '.env':
+        'OPENAI_API_KEY=sk-your-openai-api-key-here\nLANGSMITH_API_KEY=\nLANGSMITH_TRACING=false\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
       'pyproject.toml': `[project]\nname = "${name}"\nversion = "0.1.0"\nrequires-python = ">=3.10"\ndependencies = [\n    "langchain>=0.3.0",\n    "langchain-core",\n    "langchain-openai",\n    "python-dotenv",\n    "pydantic>=2.0.0"\n]\n\n[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n`,
-      'requirements.txt': 'langchain>=0.3.0\nlangchain-core\nlangchain-openai\npython-dotenv\npydantic>=2.0.0\n',
+      'requirements.txt':
+        'langchain>=0.3.0\nlangchain-core\nlangchain-openai\npython-dotenv\npydantic>=2.0.0\n',
       'README.md': [
         `# ${ctx.title || 'My LangChain App'}`,
         '',
@@ -132,19 +141,29 @@ export function buildLangGraphZip(ctx: WorkflowExportContext, code: string): Zip
     rootFolder: name,
     files: {
       'my_agent/agent.py': code,
-      'my_agent/__init__.py': 'from .agent import create_workflow_graph\n\n__all__ = ["create_workflow_graph"]\n',
+      'my_agent/__init__.py':
+        'from .agent import create_workflow_graph\n\n__all__ = ["create_workflow_graph"]\n',
       'my_agent/utils/__init__.py': '',
-      'my_agent/utils/state.py': '"""State definitions for the workflow graph."""\nfrom typing import TypedDict, Any\n\nclass WorkflowState(TypedDict, total=False):\n    messages: list\n    data: dict\n',
-      'my_agent/utils/nodes.py': '"""Node logic functions for the workflow graph."""\n# Import and use node functions defined in agent.py\n',
-      'my_agent/utils/tools.py': '"""Tool definitions for graph nodes."""\nfrom langchain_core.tools import tool\n\n# Define your custom @tool functions here\n',
+      'my_agent/utils/state.py':
+        '"""State definitions for the workflow graph."""\nfrom typing import TypedDict, Any\n\nclass WorkflowState(TypedDict, total=False):\n    messages: list\n    data: dict\n',
+      'my_agent/utils/nodes.py':
+        '"""Node logic functions for the workflow graph."""\n# Import and use node functions defined in agent.py\n',
+      'my_agent/utils/tools.py':
+        '"""Tool definitions for graph nodes."""\nfrom langchain_core.tools import tool\n\n# Define your custom @tool functions here\n',
       '.env': 'OPENAI_API_KEY=sk-your-openai-api-key-here\nLANGSMITH_API_KEY=\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
-      'langgraph.json': JSON.stringify({
-        dependencies: ['.'],
-        graphs: { workflow: './my_agent/agent.py:create_workflow_graph' },
-        env: '.env'
-      }, null, 2) + '\n',
-      'requirements.txt': 'langgraph>=0.1.0\nlangchain-openai>=0.1.0\nlangchain-core>=0.2.0\npython-dotenv>=1.0.0\n',
+      'langgraph.json':
+        JSON.stringify(
+          {
+            dependencies: ['.'],
+            graphs: { workflow: './my_agent/agent.py:create_workflow_graph' },
+            env: '.env',
+          },
+          null,
+          2,
+        ) + '\n',
+      'requirements.txt':
+        'langgraph>=0.1.0\nlangchain-openai>=0.1.0\nlangchain-core>=0.2.0\npython-dotenv>=1.0.0\n',
       'README.md': [
         `# ${ctx.title || 'My LangGraph App'}`,
         '',
@@ -189,7 +208,8 @@ export function buildOpenAIAgentsZip(ctx: WorkflowExportContext, code: string): 
     files: {
       'main.py': code,
       'agents/__init__.py': '# Import your agent definitions here\n',
-      'agents/workflow_agent.py': '"""Specialist agent definitions."""\n# from agents import Agent\n# Define sub-agents here and import in main.py\n',
+      'agents/workflow_agent.py':
+        '"""Specialist agent definitions."""\n# from agents import Agent\n# Define sub-agents here and import in main.py\n',
       'tools/__init__.py': '# Custom function tools definitions\n',
       'guardrails/__init__.py': '# Input/output validation logic\n',
       '.env': 'OPENAI_API_KEY=sk-your-openai-api-key-here\n',
@@ -229,24 +249,32 @@ export function buildOpenAIAgentsZip(ctx: WorkflowExportContext, code: string): 
 export function buildCrewAIZip(ctx: WorkflowExportContext, code: string): ZipProjectTemplate {
   const name = sanitize(ctx.title);
 
-  const crewJsonc = JSON.stringify({
-    name: ctx.title || 'My Crew',
-    description: 'AutoAgent generated CrewAI crew',
-    process: 'sequential',
-    agents: ['agents/researcher.jsonc'],
-    verbose: true,
-    memory: true
-  }, null, 2);
+  const crewJsonc = JSON.stringify(
+    {
+      name: ctx.title || 'My Crew',
+      description: 'AutoAgent generated CrewAI crew',
+      process: 'sequential',
+      agents: ['agents/researcher.jsonc'],
+      verbose: true,
+      memory: true,
+    },
+    null,
+    2,
+  );
 
-  const agentJsonc = JSON.stringify({
-    role: 'Research Specialist',
-    goal: 'Execute workflow tasks with precision',
-    backstory: 'An expert AI agent specializing in structured task execution.',
-    llm: 'gpt-4o-mini',
-    tools: [],
-    verbose: true,
-    memory: true
-  }, null, 2);
+  const agentJsonc = JSON.stringify(
+    {
+      role: 'Research Specialist',
+      goal: 'Execute workflow tasks with precision',
+      backstory: 'An expert AI agent specializing in structured task execution.',
+      llm: 'gpt-4o-mini',
+      tools: [],
+      verbose: true,
+      memory: true,
+    },
+    null,
+    2,
+  );
 
   return {
     rootFolder: name,
@@ -302,19 +330,27 @@ export function buildCrewAIZip(ctx: WorkflowExportContext, code: string): ZipPro
 export function buildAutoGenZip(ctx: WorkflowExportContext, code: string): ZipProjectTemplate {
   const name = sanitize(ctx.title);
 
-  const oaiConfig = JSON.stringify([{
-    model: 'gpt-4o-mini',
-    api_type: 'openai'
-  }], null, 2);
+  const oaiConfig = JSON.stringify(
+    [
+      {
+        model: 'gpt-4o-mini',
+        api_type: 'openai',
+      },
+    ],
+    null,
+    2,
+  );
 
   return {
     rootFolder: name,
     files: {
       'main.py': code,
       'agents/__init__.py': '# Agent persona definitions\n',
-      'agents/researcher.py': '"""Example agent definition."""\n# from autogen_agentchat.agents import AssistantAgent\n# Define specialist agents here\n',
+      'agents/researcher.py':
+        '"""Example agent definition."""\n# from autogen_agentchat.agents import AssistantAgent\n# Define specialist agents here\n',
       'tools/__init__.py': '# Custom function tool definitions\n',
-      'tools/search_tool.py': '"""Example tool definition."""\n# Define tools as plain Python async functions\n',
+      'tools/search_tool.py':
+        '"""Example tool definition."""\n# Define tools as plain Python async functions\n',
       'config/oai_config.json': oaiConfig,
       '.env': 'OPENAI_API_KEY=sk-your-openai-api-key-here\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
@@ -352,36 +388,39 @@ export function buildLlamaIndexZip(ctx: WorkflowExportContext, code: string): Zi
     rootFolder: name,
     files: {
       'workflow.py': code,
-      'events.py': [
-        '"""Custom Event definitions for the LlamaIndex Workflow."""',
-        'from typing import Any, Dict',
-        'from llama_index.core.workflow import Event',
-        '',
-        '# Define your custom event payloads here',
-        'class InputEvent(Event):',
-        '    payload: Dict[str, Any]',
-        '',
-        'class OutputEvent(Event):',
-        '    result: Any',
-      ].join('\n') + '\n',
-      'main.py': [
-        '"""Entry point – runs the LlamaIndex Workflow."""',
-        'import asyncio',
-        'from workflow import create_workflow',
-        '',
-        'async def main():',
-        `    wf = create_workflow()`,
-        `    result = await wf.run(input="${ctx.prompt || 'Execute automation'}")`,
-        '    print("\\n=== Workflow Complete ===")',
-        '    print(result)',
-        '',
-        'if __name__ == "__main__":',
-        '    asyncio.run(main())',
-      ].join('\n') + '\n',
+      'events.py':
+        [
+          '"""Custom Event definitions for the LlamaIndex Workflow."""',
+          'from typing import Any, Dict',
+          'from llama_index.core.workflow import Event',
+          '',
+          '# Define your custom event payloads here',
+          'class InputEvent(Event):',
+          '    payload: Dict[str, Any]',
+          '',
+          'class OutputEvent(Event):',
+          '    result: Any',
+        ].join('\n') + '\n',
+      'main.py':
+        [
+          '"""Entry point – runs the LlamaIndex Workflow."""',
+          'import asyncio',
+          'from workflow import create_workflow',
+          '',
+          'async def main():',
+          `    wf = create_workflow()`,
+          `    result = await wf.run(input="${ctx.prompt || 'Execute automation'}")`,
+          '    print("\\n=== Workflow Complete ===")',
+          '    print(result)',
+          '',
+          'if __name__ == "__main__":',
+          '    asyncio.run(main())',
+        ].join('\n') + '\n',
       'data/.gitkeep': '',
       '.env': 'OPENAI_API_KEY=sk-your-openai-api-key-here\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
-      'requirements.txt': 'llama-index-core\nllama-index-workflows\nllama-index-llms-openai\npython-dotenv\n',
+      'requirements.txt':
+        'llama-index-core\nllama-index-workflows\nllama-index-llms-openai\npython-dotenv\n',
       'README.md': [
         `# ${ctx.title || 'My LlamaIndex Workflow'}`,
         '',
@@ -410,7 +449,10 @@ export function buildLlamaIndexZip(ctx: WorkflowExportContext, code: string): Zi
 // │       └── config.json      # Execution settings
 // ├── .env
 // └── requirements.txt
-export function buildSemanticKernelZip(ctx: WorkflowExportContext, code: string): ZipProjectTemplate {
+export function buildSemanticKernelZip(
+  ctx: WorkflowExportContext,
+  code: string,
+): ZipProjectTemplate {
   const name = sanitize(ctx.title);
 
   const skPrompt = `You are an AI assistant in the workflow: ${ctx.title || 'My Workflow'}.
@@ -419,19 +461,21 @@ Input: {{$input}}
 
 Execute your assigned task and return a structured response.`;
 
-  const pluginConfig = JSON.stringify({
-    schema: 1,
-    description: `Plugin for ${ctx.title || 'workflow'} automation`,
-    execution_settings: {
-      default: {
-        max_tokens: 1024,
-        temperature: 0.2
-      }
+  const pluginConfig = JSON.stringify(
+    {
+      schema: 1,
+      description: `Plugin for ${ctx.title || 'workflow'} automation`,
+      execution_settings: {
+        default: {
+          max_tokens: 1024,
+          temperature: 0.2,
+        },
+      },
+      input_variables: [{ name: 'input', description: 'The input context', required: true }],
     },
-    input_variables: [
-      { name: 'input', description: 'The input context', required: true }
-    ]
-  }, null, 2);
+    null,
+    2,
+  );
 
   return {
     rootFolder: name,
@@ -439,7 +483,8 @@ Execute your assigned task and return a structured response.`;
       'main.py': code,
       'plugins/WorkflowPlugin/skprompt.txt': skPrompt,
       'plugins/WorkflowPlugin/config.json': pluginConfig,
-      '.env': 'GLOBAL_LLM_SERVICE=OpenAI\nOPENAI_API_KEY=sk-your-openai-api-key-here\nOPENAI_CHAT_MODEL_ID=gpt-4o-mini\n',
+      '.env':
+        'GLOBAL_LLM_SERVICE=OpenAI\nOPENAI_API_KEY=sk-your-openai-api-key-here\nOPENAI_CHAT_MODEL_ID=gpt-4o-mini\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
       'requirements.txt': 'semantic-kernel>=1.0.0\npython-dotenv>=1.0.0\n',
       'README.md': [
@@ -482,66 +527,69 @@ Execute your assigned task and return a structured response.`;
 export function buildCustomAgentZip(ctx: WorkflowExportContext, code: string): ZipProjectTemplate {
   const name = sanitize(ctx.title);
 
-  const enginePy = [
-    '"""Custom Workflow Engine – Core Orchestration Module"""',
-    'import time',
-    'from dataclasses import dataclass, field',
-    'from typing import Callable, Dict, Any, List',
-    '',
-    '@dataclass',
-    'class WorkflowState:',
-    '    data: Dict[str, Any] = field(default_factory=dict)',
-    '    logs: List[str] = field(default_factory=list)',
-    '',
-    '@dataclass',
-    'class WorkflowNode:',
-    '    id: str',
-    '    name: str',
-    '    action: Callable[["WorkflowState"], Dict[str, Any]]',
-    '    retries: int = 2',
-    '',
-    'class CustomWorkflowEngine:',
-    '    def __init__(self):',
-    '        self.nodes: List[WorkflowNode] = []',
-    '        self.state = WorkflowState()',
-    '',
-    '    def add_step(self, node: WorkflowNode):',
-    '        self.nodes.append(node)',
-    '',
-    '    def run(self, initial_data: Dict[str, Any] = None) -> WorkflowState:',
-    '        if initial_data:',
-    '            self.state.data.update(initial_data)',
-    '        print("=== EXECUTING CUSTOM AGENT ENGINE ===")',
-    '        for node in self.nodes:',
-    '            attempts, success = 0, False',
-    '            while attempts <= node.retries and not success:',
-    '                try:',
-    '                    start = time.time()',
-    '                    print(f"Executing: [{node.name}] (attempt {attempts + 1})...")',
-    '                    output = node.action(self.state)',
-    '                    self.state.data.update(output)',
-    '                    ms = round((time.time() - start) * 1000, 2)',
-    '                    self.state.logs.append(f"✓ {node.name} completed in {ms}ms")',
-    '                    success = True',
-    '                except Exception as e:',
-    '                    attempts += 1',
-    '                    print(f"  Error in {node.name}: {e}")',
-    '                    if attempts > node.retries:',
-    '                        self.state.logs.append(f"✗ {node.name} failed: {e}")',
-    '                        raise',
-    '        print("=== WORKFLOW FINISHED ===")',
-    '        return self.state',
-  ].join('\n') + '\n';
+  const enginePy =
+    [
+      '"""Custom Workflow Engine – Core Orchestration Module"""',
+      'import time',
+      'from dataclasses import dataclass, field',
+      'from typing import Callable, Dict, Any, List',
+      '',
+      '@dataclass',
+      'class WorkflowState:',
+      '    data: Dict[str, Any] = field(default_factory=dict)',
+      '    logs: List[str] = field(default_factory=list)',
+      '',
+      '@dataclass',
+      'class WorkflowNode:',
+      '    id: str',
+      '    name: str',
+      '    action: Callable[["WorkflowState"], Dict[str, Any]]',
+      '    retries: int = 2',
+      '',
+      'class CustomWorkflowEngine:',
+      '    def __init__(self):',
+      '        self.nodes: List[WorkflowNode] = []',
+      '        self.state = WorkflowState()',
+      '',
+      '    def add_step(self, node: WorkflowNode):',
+      '        self.nodes.append(node)',
+      '',
+      '    def run(self, initial_data: Dict[str, Any] = None) -> WorkflowState:',
+      '        if initial_data:',
+      '            self.state.data.update(initial_data)',
+      '        print("=== EXECUTING CUSTOM AGENT ENGINE ===")',
+      '        for node in self.nodes:',
+      '            attempts, success = 0, False',
+      '            while attempts <= node.retries and not success:',
+      '                try:',
+      '                    start = time.time()',
+      '                    print(f"Executing: [{node.name}] (attempt {attempts + 1})...")',
+      '                    output = node.action(self.state)',
+      '                    self.state.data.update(output)',
+      '                    ms = round((time.time() - start) * 1000, 2)',
+      '                    self.state.logs.append(f"✓ {node.name} completed in {ms}ms")',
+      '                    success = True',
+      '                except Exception as e:',
+      '                    attempts += 1',
+      '                    print(f"  Error in {node.name}: {e}")',
+      '                    if attempts > node.retries:',
+      '                        self.state.logs.append(f"✗ {node.name} failed: {e}")',
+      '                        raise',
+      '        print("=== WORKFLOW FINISHED ===")',
+      '        return self.state',
+    ].join('\n') + '\n';
 
   return {
     rootFolder: name,
     files: {
       'src/main.py': code,
-      'engine/__init__.py': 'from .workflow import CustomWorkflowEngine, WorkflowState, WorkflowNode\n\n__all__ = ["CustomWorkflowEngine", "WorkflowState", "WorkflowNode"]\n',
+      'engine/__init__.py':
+        'from .workflow import CustomWorkflowEngine, WorkflowState, WorkflowNode\n\n__all__ = ["CustomWorkflowEngine", "WorkflowState", "WorkflowNode"]\n',
       'engine/workflow.py': enginePy,
       '.env': '# Add any API keys your workflow steps use\n# OPENAI_API_KEY=your_key_here\n',
       '.gitignore': '.env\n__pycache__/\n*.pyc\nvenv/\n.venv/\n',
-      'requirements.txt': '# No external agent frameworks required – pure Python stdlib\npython-dotenv>=1.0.0\n',
+      'requirements.txt':
+        '# No external agent frameworks required – pure Python stdlib\npython-dotenv>=1.0.0\n',
       'README.md': [
         `# ${ctx.title || 'My Custom Agent'}`,
         '',
@@ -558,9 +606,6 @@ export function buildCustomAgentZip(ctx: WorkflowExportContext, code: string): Z
     },
   };
 }
-
-
-
 
 type BuilderFn = (ctx: WorkflowExportContext, code: string) => ZipProjectTemplate;
 
@@ -581,7 +626,7 @@ export async function downloadFrameworkZip(
   approachId: string,
   ctx: WorkflowExportContext,
   code: string,
-  zipFilename: string
+  zipFilename: string,
 ): Promise<void> {
   const builder = ZIP_BUILDERS[approachId] ?? buildRawLLMZip;
   const template = builder(ctx, code);
@@ -598,7 +643,11 @@ export async function downloadFrameworkZip(
     folder.file(parts[parts.length - 1], content);
   }
 
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

@@ -69,7 +69,9 @@ describe('session tokens', () => {
   });
 
   it('rejects an expired token', async () => {
-    const { createSessionToken, verifySessionToken } = await loadSession({ SESSION_TTL_HOURS: '1' });
+    const { createSessionToken, verifySessionToken } = await loadSession({
+      SESSION_TTL_HOURS: '1',
+    });
 
     const issuedAt = Date.now();
     const token = createSessionToken(undefined, issuedAt);

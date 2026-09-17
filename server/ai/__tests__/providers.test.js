@@ -117,7 +117,10 @@ describe('provider adapters', () => {
     });
 
     it('marks rate limiting as retryable and passes 429 through', async () => {
-      vi.stubGlobal('fetch', vi.fn(async () => new Response('slow down', { status: 429 })));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('slow down', { status: 429 })),
+      );
       const { callProvider } = await loadProviders();
 
       const error = await callProvider({ prompt: 'hi' }).catch((e) => e);
@@ -126,7 +129,10 @@ describe('provider adapters', () => {
     });
 
     it('marks upstream 5xx as retryable', async () => {
-      vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503 })));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('boom', { status: 503 })),
+      );
       const { callProvider } = await loadProviders();
 
       const error = await callProvider({ prompt: 'hi' }).catch((e) => e);
@@ -154,8 +160,6 @@ describe('provider adapters', () => {
       expect(calledUrl).toContain('/api/chat');
       expect(calledUrl).not.toContain('openrouter');
     });
-
-
 
     it('surfaces a timeout as a retryable 504', async () => {
       vi.stubGlobal(

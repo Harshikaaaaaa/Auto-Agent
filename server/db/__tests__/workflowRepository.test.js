@@ -48,7 +48,7 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
   const sampleInput = (name) => ({
     name,
     nodes: [{ id: 'n1', type: 'trigger', data: { label: 'Start' } }],
-    edges: [{ source: 'n1', target: 'n2', condition: "score > 50" }],
+    edges: [{ source: 'n1', target: 'n2', condition: 'score > 50' }],
     initialState: { score: 80 },
     metadata: { tags: ['test'] },
   });
@@ -68,7 +68,7 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
       expect(created.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
-    it('lists only the calling owner\'s workflows', async () => {
+    it("lists only the calling owner's workflows", async () => {
       await repository.createWorkflow(OWNER, sampleInput('Mine'));
       await repository.createWorkflow(OTHER_OWNER, sampleInput('Theirs'));
 
@@ -77,7 +77,7 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
       expect(mine[0].name).toBe('Mine');
     });
 
-    it('does not leak another owner\'s workflow through its id', async () => {
+    it("does not leak another owner's workflow through its id", async () => {
       const theirs = await repository.createWorkflow(OTHER_OWNER, sampleInput('Theirs'));
 
       // Knowing the id must not be enough to read it.
@@ -108,7 +108,9 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
       // mutated it, and rewrote the file, so one of two concurrent saves vanished.
       const names = Array.from({ length: 12 }, (_, i) => `Concurrent ${i}`);
 
-      await Promise.all(names.map((name) => repository.upsertWorkflowByName(OWNER, sampleInput(name))));
+      await Promise.all(
+        names.map((name) => repository.upsertWorkflowByName(OWNER, sampleInput(name))),
+      );
 
       const saved = await repository.listWorkflows(OWNER);
       expect(saved).toHaveLength(names.length);
@@ -200,7 +202,7 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
       expect(await repository.listWorkflows(OWNER)).toHaveLength(0);
     });
 
-    it('will not delete another owner\'s workflow', async () => {
+    it("will not delete another owner's workflow", async () => {
       const theirs = await repository.createWorkflow(OTHER_OWNER, sampleInput('Protected'));
 
       expect(await repository.deleteWorkflowById(OWNER, theirs.id)).toBe(false);
@@ -260,7 +262,10 @@ describe.skipIf(!mysqlAvailable)('workflow repository (MySQL)', () => {
     function writeLegacyFile(contents) {
       tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autoagent-legacy-'));
       const filePath = path.join(tempDir, 'workflows.json');
-      fs.writeFileSync(filePath, typeof contents === 'string' ? contents : JSON.stringify(contents));
+      fs.writeFileSync(
+        filePath,
+        typeof contents === 'string' ? contents : JSON.stringify(contents),
+      );
       return filePath;
     }
 

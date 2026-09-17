@@ -309,6 +309,26 @@ describe('security headers', () => {
     expect(headers.get('referrer-policy')).toBe('no-referrer');
   });
 
+  it('serves styles and fonts only from our own origin (no CDNs)', async () => {
+    // Task 15 bundled Tailwind, the fonts, and react-flow's CSS into the build,
+    // so the CSP must not permit any third-party style or font origin. If a CDN
+    // sneaks back into the page, this fails.
+    const { headers } = await req('/healthz');
+    const csp = headers.get('content-security-policy');
+
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("font-src 'self' data:");
+    expect(csp).not.toContain('googleapis.com');
+    expect(csp).not.toContain('gstatic.com');
+    expect(csp).not.toContain('jsdelivr.net');
+  });
+
+  it('allows no third-party script origin', async () => {
+    const { headers } = await req('/healthz');
+    const csp = headers.get('content-security-policy');
+    expect(csp).toContain("script-src 'self'");
+  });
+
   it('does not advertise the server implementation', async () => {
     const { headers } = await req('/healthz');
     expect(headers.get('x-powered-by')).toBeNull();

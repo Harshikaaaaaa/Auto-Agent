@@ -24,45 +24,45 @@ export type FlowNode = Node<NodeData>;
  * fields that only one variant uses are optional.
  */
 export interface ReusableNodeTemplate {
-    id?: string;
-    label: string;
-    description: string;
-    nodeType: NodeType;
-    toolId?: string;
-    toolName?: string;
-    toolAction?: string;
-    inputKeys?: string[];
-    outputKeys?: string[];
-    stateContract?: NodeStateContract;
+  id?: string;
+  label: string;
+  description: string;
+  nodeType: NodeType;
+  toolId?: string;
+  toolName?: string;
+  toolAction?: string;
+  inputKeys?: string[];
+  outputKeys?: string[];
+  stateContract?: NodeStateContract;
 }
 
 // ==================== GRAPH STATE ====================
 
 /** The shared state object that flows through the entire graph */
 export interface GraphState {
-    [key: string]: any;
-    __metadata: GraphMetadata;
+  [key: string]: any;
+  __metadata: GraphMetadata;
 }
 
 export interface GraphMetadata {
-    runId: string;
-    startedAt: string;
-    currentNodeId: string | null;
-    status: 'idle' | 'running' | 'paused' | 'completed' | 'failed';
-    error?: string;
+  runId: string;
+  startedAt: string;
+  currentNodeId: string | null;
+  status: 'idle' | 'running' | 'paused' | 'completed' | 'failed';
+  error?: string;
 }
 
 /** Declares which state keys a node reads and writes */
 export interface NodeStateContract {
-    inputKeys: string[];
-    outputKeys: string[];
-    /**
-     * The subset of `inputKeys` the user must supply, because no upstream step
-     * produces them (a spreadsheet id, a target URL). Derived from the bound
-     * action's schema by the planner — see `getExternalInputKeys`.
-     */
-    externalInputKeys?: string[];
-    reducer?: 'overwrite' | 'append' | 'merge';
+  inputKeys: string[];
+  outputKeys: string[];
+  /**
+   * The subset of `inputKeys` the user must supply, because no upstream step
+   * produces them (a spreadsheet id, a target URL). Derived from the bound
+   * action's schema by the planner — see `getExternalInputKeys`.
+   */
+  externalInputKeys?: string[];
+  reducer?: 'overwrite' | 'append' | 'merge';
 }
 
 // ==================== CONDITIONAL ROUTING ====================
@@ -73,90 +73,90 @@ export interface NodeStateContract {
  * routes to one of the named output ports.
  */
 export interface RouterNodeConfig {
-    /** The state key whose value determines the route */
-    stateKey: string;
-    /** Map of value → target node id */
-    routes: Record<string, string>;
-    /** Default target node id when no route matches */
-    defaultRoute?: string;
+  /** The state key whose value determines the route */
+  stateKey: string;
+  /** Map of value → target node id */
+  routes: Record<string, string>;
+  /** Default target node id when no route matches */
+  defaultRoute?: string;
 }
 
 // ==================== NODE & EDGE ====================
 
 export interface NodeData {
-    label: string;
-    type: NodeType;
-    description?: string;
-    icon?: string;
-    color?: string;
-    stateContract?: NodeStateContract;
-    // Tool integration
-    toolId?: string;        // references a tool from the central registry
-    toolAction?: string;    // specific action to invoke (e.g. 'send_email')
-    // Router configuration (for logic/router nodes)
-    routerConfig?: RouterNodeConfig;
-    // Debugging
-    breakpoint?: 'before' | 'after' | 'both';
-    // Runtime state
-    isRunning?: boolean;
-    lastSuccess?: boolean;
-    output?: string;
-    // Runtime safety gates
-    requiresApproval?: boolean;
-    approvalMessage?: string;
-    /**
-     * The planner could not bind this step to any registered action. The node is
-     * a visible placeholder for the gap, and the executor refuses to run it
-     * rather than handing it to an LLM and reporting success.
-     */
-    unsupported?: boolean;
-    unsupportedReason?: string;
-    // Other dynamic fields (e.g. initialState, configuredRecipient)
-    [key: string]: any;
+  label: string;
+  type: NodeType;
+  description?: string;
+  icon?: string;
+  color?: string;
+  stateContract?: NodeStateContract;
+  // Tool integration
+  toolId?: string; // references a tool from the central registry
+  toolAction?: string; // specific action to invoke (e.g. 'send_email')
+  // Router configuration (for logic/router nodes)
+  routerConfig?: RouterNodeConfig;
+  // Debugging
+  breakpoint?: 'before' | 'after' | 'both';
+  // Runtime state
+  isRunning?: boolean;
+  lastSuccess?: boolean;
+  output?: string;
+  // Runtime safety gates
+  requiresApproval?: boolean;
+  approvalMessage?: string;
+  /**
+   * The planner could not bind this step to any registered action. The node is
+   * a visible placeholder for the gap, and the executor refuses to run it
+   * rather than handing it to an LLM and reporting success.
+   */
+  unsupported?: boolean;
+  unsupportedReason?: string;
+  // Other dynamic fields (e.g. initialState, configuredRecipient)
+  [key: string]: any;
 }
 
 export interface WorkflowNode {
-    id: string;
-    type: string;
-    position: { x: number; y: number };
-    data: NodeData;
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+  data: NodeData;
 }
 
 export interface WorkflowEdge {
-    id: string;
-    source: string;
-    target: string;
-    label?: string;
-    /** Condition expression evaluated against graph state (e.g. "sentiment === 'positive'") */
-    condition?: string;
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+  /** Condition expression evaluated against graph state (e.g. "sentiment === 'positive'") */
+  condition?: string;
 }
 
 // ==================== WORKFLOW ====================
 
 export interface Workflow {
-    nodes: WorkflowNode[];
-    edges: WorkflowEdge[];
-    initialState?: Record<string, any>;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  initialState?: Record<string, any>;
 }
 
 // ==================== EXECUTION ====================
 
 export interface ExecutionLog {
-    node: string;
-    time: string;
-    output: string;
-    status?: 'running' | 'completed' | 'failed' | 'retrying';
-    stateSnapshot?: Record<string, any>;
-    /** Duration in milliseconds */
-    durationMs?: number;
-    /**
-     * Why the step failed, from the shared taxonomy in `nodeFailure.ts`.
-     * Drives whether it was retried and what the user is told to do.
-     */
-    failureKind?: FailureKind;
-    /**
-     * Other registered `toolId.action` pairs providing the same capability.
-     * Offered for a human to choose — the engine never substitutes one.
-     */
-    alternatives?: string[];
+  node: string;
+  time: string;
+  output: string;
+  status?: 'running' | 'completed' | 'failed' | 'retrying';
+  stateSnapshot?: Record<string, any>;
+  /** Duration in milliseconds */
+  durationMs?: number;
+  /**
+   * Why the step failed, from the shared taxonomy in `nodeFailure.ts`.
+   * Drives whether it was retried and what the user is told to do.
+   */
+  failureKind?: FailureKind;
+  /**
+   * Other registered `toolId.action` pairs providing the same capability.
+   * Offered for a human to choose — the engine never substitutes one.
+   */
+  alternatives?: string[];
 }

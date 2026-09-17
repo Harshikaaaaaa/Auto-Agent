@@ -1,13 +1,13 @@
 import {
-    Capability,
-    FieldSchema,
-    FieldSchemaMap,
-    SideEffect,
-    Tool,
-    ToolAction,
-    ToolActionDefinition,
-    ToolDefinition,
-    ToolStatus
+  Capability,
+  FieldSchema,
+  FieldSchemaMap,
+  SideEffect,
+  Tool,
+  ToolAction,
+  ToolActionDefinition,
+  ToolDefinition,
+  ToolStatus,
 } from './types';
 
 // ==================== TOOL REGISTRY ====================
@@ -28,9 +28,9 @@ const tools = new Map<string, Tool>();
 export const ACTION_ERROR_KEY = 'error';
 
 const ACTION_ERROR_FIELD: FieldSchema = {
-    type: 'string',
-    description:
-        'Set to a human-readable reason when the action failed. Absent or empty means it succeeded.'
+  type: 'string',
+  description:
+    'Set to a human-readable reason when the action failed. Absent or empty means it succeeded.',
 };
 
 /**
@@ -44,30 +44,30 @@ const ACTION_ERROR_FIELD: FieldSchema = {
  * own keeps that description.
  */
 function normalizeAction(action: ToolActionDefinition): ToolAction {
-    const outputSchema: FieldSchemaMap = {
-        ...action.outputSchema,
-        [ACTION_ERROR_KEY]: action.outputSchema[ACTION_ERROR_KEY] ?? ACTION_ERROR_FIELD
-    };
+  const outputSchema: FieldSchemaMap = {
+    ...action.outputSchema,
+    [ACTION_ERROR_KEY]: action.outputSchema[ACTION_ERROR_KEY] ?? ACTION_ERROR_FIELD,
+  };
 
-    return {
-        ...action,
-        outputSchema,
-        inputKeys: Object.keys(action.inputSchema),
-        outputKeys: Object.keys(outputSchema)
-    };
+  return {
+    ...action,
+    outputSchema,
+    inputKeys: Object.keys(action.inputSchema),
+    outputKeys: Object.keys(outputSchema),
+  };
 }
 
 /** Register a tool in the central registry */
 export function registerTool(tool: ToolDefinition | Tool): void {
-    const actions = tool.actions.map(normalizeAction);
+  const actions = tool.actions.map(normalizeAction);
 
-    // A tool's capabilities are the union of what its actions can do, so the two
-    // can never disagree.
-    const capabilities = Array.from(
-        new Set(actions.flatMap(action => action.capabilities))
-    ) as Capability[];
+  // A tool's capabilities are the union of what its actions can do, so the two
+  // can never disagree.
+  const capabilities = Array.from(
+    new Set(actions.flatMap((action) => action.capabilities)),
+  ) as Capability[];
 
-    tools.set(tool.id, { ...tool, actions, capabilities } as Tool);
+  tools.set(tool.id, { ...tool, actions, capabilities } as Tool);
 }
 
 // ==================== SAFETY CLASSIFICATION ====================
@@ -83,15 +83,15 @@ export function registerTool(tool: ToolDefinition | Tool): void {
  * stale the moment a connector was added.
  */
 export function actionRequiresApproval(toolId?: string, actionName?: string): boolean {
-    if (!toolId || !actionName) return false;
-    const action = getTool(toolId)?.actions.find(a => a.name === actionName);
-    return action?.sideEffect === 'irreversible';
+  if (!toolId || !actionName) return false;
+  const action = getTool(toolId)?.actions.find((a) => a.name === actionName);
+  return action?.sideEffect === 'irreversible';
 }
 
 /** Side-effect class of an action, or undefined when it is not registered. */
 export function getActionSideEffect(toolId?: string, actionName?: string): SideEffect | undefined {
-    if (!toolId || !actionName) return undefined;
-    return getTool(toolId)?.actions.find(a => a.name === actionName)?.sideEffect;
+  if (!toolId || !actionName) return undefined;
+  return getTool(toolId)?.actions.find((a) => a.name === actionName)?.sideEffect;
 }
 
 /**
@@ -101,120 +101,120 @@ export function getActionSideEffect(toolId?: string, actionName?: string): SideE
  * provider when one fails.
  */
 export function findActionsByCapability(
-    capability: Capability
+  capability: Capability,
 ): Array<{ toolId: string; toolName: string; action: ToolAction }> {
-    const matches: Array<{ toolId: string; toolName: string; action: ToolAction }> = [];
+  const matches: Array<{ toolId: string; toolName: string; action: ToolAction }> = [];
 
-    for (const tool of getAllTools()) {
-        for (const action of tool.actions) {
-            if (action.capabilities.includes(capability)) {
-                matches.push({ toolId: tool.id, toolName: tool.name, action });
-            }
-        }
+  for (const tool of getAllTools()) {
+    for (const action of tool.actions) {
+      if (action.capabilities.includes(capability)) {
+        matches.push({ toolId: tool.id, toolName: tool.name, action });
+      }
     }
+  }
 
-    return matches.sort((a, b) => {
-        const aProfile = a.action.costProfile ?? getTool(a.toolId)?.costProfile;
-        const bProfile = b.action.costProfile ?? getTool(b.toolId)?.costProfile;
-        const reliability = (bProfile?.reliability ?? 0) - (aProfile?.reliability ?? 0);
-        if (reliability !== 0) return reliability;
-        return (aProfile?.latencyMs ?? 0) - (bProfile?.latencyMs ?? 0);
-    });
+  return matches.sort((a, b) => {
+    const aProfile = a.action.costProfile ?? getTool(a.toolId)?.costProfile;
+    const bProfile = b.action.costProfile ?? getTool(b.toolId)?.costProfile;
+    const reliability = (bProfile?.reliability ?? 0) - (aProfile?.reliability ?? 0);
+    if (reliability !== 0) return reliability;
+    return (aProfile?.latencyMs ?? 0) - (bProfile?.latencyMs ?? 0);
+  });
 }
 
 /** Input fields the user must supply, which cannot come from upstream state. */
 export function getExternalInputKeys(toolId?: string, actionName?: string): string[] {
-    if (!toolId || !actionName) return [];
-    const action = getTool(toolId)?.actions.find(a => a.name === actionName);
-    if (!action) return [];
-    return Object.entries(action.inputSchema)
-        .filter(([, schema]) => schema.external)
-        .map(([key]) => key);
+  if (!toolId || !actionName) return [];
+  const action = getTool(toolId)?.actions.find((a) => a.name === actionName);
+  if (!action) return [];
+  return Object.entries(action.inputSchema)
+    .filter(([, schema]) => schema.external)
+    .map(([key]) => key);
 }
 
 /** Get a tool by ID */
 export function getTool(id: string): Tool | undefined {
-    return tools.get(id);
+  return tools.get(id);
 }
 
 /** Get all registered tools */
 export function getAllTools(): Tool[] {
-    return Array.from(tools.values());
+  return Array.from(tools.values());
 }
 
 /** Get only authenticated tools */
 export function getAuthenticatedTools(): Tool[] {
-    return getAllTools().filter(t => t.isAuthenticated());
+  return getAllTools().filter((t) => t.isAuthenticated());
 }
 
 export interface ReusableToolTemplate {
-    id: string;
-    toolId: string;
-    toolName: string;
-    toolAction: string;
-    label: string;
-    description: string;
-    inputKeys: string[];
-    outputKeys: string[];
-    score: number;
+  id: string;
+  toolId: string;
+  toolName: string;
+  toolAction: string;
+  label: string;
+  description: string;
+  inputKeys: string[];
+  outputKeys: string[];
+  score: number;
 }
 
 export interface CapabilityMatch {
-    toolId: string;
-    toolName: string;
-    actionName: string;
-    score: number;
-    rationale: string[];
+  toolId: string;
+  toolName: string;
+  actionName: string;
+  score: number;
+  rationale: string[];
 }
 
 /** One input field as sent to the planner. */
 export interface CatalogField {
-    name: string;
-    type: string;
-    description: string;
-    required: boolean;
-    /** Must be supplied by the user; cannot come from an earlier step. */
-    external: boolean;
-    format?: string;
-    enum?: readonly string[];
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  /** Must be supplied by the user; cannot come from an earlier step. */
+  external: boolean;
+  format?: string;
+  enum?: readonly string[];
 }
 
 /** One action as sent to the planner. */
 export interface CatalogAction {
-    name: string;
-    description: string;
-    capabilities: readonly Capability[];
-    sideEffect: SideEffect;
-    requiresAuth: boolean;
-    requiresApproval: boolean;
-    inputs: CatalogField[];
-    outputs: CatalogField[];
-    /** Kept for consumers that only need the flat key lists. */
-    inputKeys: string[];
-    outputKeys: string[];
+  name: string;
+  description: string;
+  capabilities: readonly Capability[];
+  sideEffect: SideEffect;
+  requiresAuth: boolean;
+  requiresApproval: boolean;
+  inputs: CatalogField[];
+  outputs: CatalogField[];
+  /** Kept for consumers that only need the flat key lists. */
+  inputKeys: string[];
+  outputKeys: string[];
 }
 
 /** One tool as sent to the planner. */
 export interface CatalogTool {
-    id: string;
-    name: string;
-    description: string;
-    category: string;
-    capabilities: readonly Capability[];
-    authenticated: boolean;
-    actions: CatalogAction[];
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  capabilities: readonly Capability[];
+  authenticated: boolean;
+  actions: CatalogAction[];
 }
 
 function describeFields(schema: Record<string, import('./types').FieldSchema>): CatalogField[] {
-    return Object.entries(schema).map(([name, field]) => ({
-        name,
-        type: field.type,
-        description: field.description,
-        required: Boolean(field.required),
-        external: Boolean(field.external),
-        ...(field.format ? { format: field.format } : {}),
-        ...(field.enum ? { enum: field.enum } : {})
-    }));
+  return Object.entries(schema).map(([name, field]) => ({
+    name,
+    type: field.type,
+    description: field.description,
+    required: Boolean(field.required),
+    external: Boolean(field.external),
+    ...(field.format ? { format: field.format } : {}),
+    ...(field.enum ? { enum: field.enum } : {}),
+  }));
 }
 
 /**
@@ -229,161 +229,163 @@ function describeFields(schema: Record<string, import('./types').FieldSchema>): 
  * invite the model to optimise for the wrong thing.
  */
 export function describeCatalog(): CatalogTool[] {
-    return getAllTools().map(tool => ({
-        id: tool.id,
-        name: tool.name,
-        description: tool.description,
-        category: tool.category,
-        capabilities: tool.capabilities ?? [],
-        authenticated: tool.isAuthenticated(),
-        actions: tool.actions.map(action => ({
-            name: action.name,
-            description: action.description,
-            capabilities: action.capabilities,
-            sideEffect: action.sideEffect,
-            requiresAuth: action.requiresAuth,
-            requiresApproval: action.sideEffect === 'irreversible',
-            inputs: describeFields(action.inputSchema),
-            outputs: describeFields(action.outputSchema),
-            inputKeys: action.inputKeys,
-            outputKeys: action.outputKeys
-        }))
-    }));
+  return getAllTools().map((tool) => ({
+    id: tool.id,
+    name: tool.name,
+    description: tool.description,
+    category: tool.category,
+    capabilities: tool.capabilities ?? [],
+    authenticated: tool.isAuthenticated(),
+    actions: tool.actions.map((action) => ({
+      name: action.name,
+      description: action.description,
+      capabilities: action.capabilities,
+      sideEffect: action.sideEffect,
+      requiresAuth: action.requiresAuth,
+      requiresApproval: action.sideEffect === 'irreversible',
+      inputs: describeFields(action.inputSchema),
+      outputs: describeFields(action.outputSchema),
+      inputKeys: action.inputKeys,
+      outputKeys: action.outputKeys,
+    })),
+  }));
 }
 
 /** Every capability provided by at least one registered action. */
 export function getAvailableCapabilities(): Capability[] {
-    return Array.from(
-        new Set(getAllTools().flatMap(tool => tool.actions.flatMap(a => a.capabilities)))
-    ).sort();
+  return Array.from(
+    new Set(getAllTools().flatMap((tool) => tool.actions.flatMap((a) => a.capabilities))),
+  ).sort();
 }
 
 export function getToolCapabilityMatches(searchText: string): CapabilityMatch[] {
-    return rankToolMatches(searchText);
+  return rankToolMatches(searchText);
 }
 
 /** Normalize text to compare prompts against tool/action names reliably. */
 function normalizeToolText(value: string): string {
-    return (value || '')
-        .toLowerCase()
-        .replace(/[_-]+/g, ' ')
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+  return (value || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Finds the best matching built-in tool action based on the user prompt or node text. */
 export function findReusableToolTemplate(searchText: string): ReusableToolTemplate | null {
-    const matches = rankToolMatches(searchText);
-    if (matches.length === 0) return null;
+  const matches = rankToolMatches(searchText);
+  if (matches.length === 0) return null;
 
-    const best = matches[0];
-    const tool = getTool(best.toolId);
-    const action = tool?.actions.find(a => a.name === best.actionName);
-    if (!tool || !action) return null;
+  const best = matches[0];
+  const tool = getTool(best.toolId);
+  const action = tool?.actions.find((a) => a.name === best.actionName);
+  if (!tool || !action) return null;
 
-    return {
-        id: `${tool.id}_${action.name}`,
-        toolId: tool.id,
-        toolName: tool.name,
-        toolAction: action.name,
-        label: `${tool.name}: ${action.name.replace(/_/g, ' ')}`,
-        description: action.description,
-        inputKeys: action.inputKeys,
-        outputKeys: action.outputKeys,
-        score: best.score
-    };
+  return {
+    id: `${tool.id}_${action.name}`,
+    toolId: tool.id,
+    toolName: tool.name,
+    toolAction: action.name,
+    label: `${tool.name}: ${action.name.replace(/_/g, ' ')}`,
+    description: action.description,
+    inputKeys: action.inputKeys,
+    outputKeys: action.outputKeys,
+    score: best.score,
+  };
 }
 
 /** Rank built-in tools and actions for a given prompt using semantic capability matching. */
 export function rankToolMatches(searchText: string): CapabilityMatch[] {
-    const normalized = normalizeToolText(searchText);
-    if (!normalized) return [];
+  const normalized = normalizeToolText(searchText);
+  if (!normalized) return [];
 
-    const candidates: CapabilityMatch[] = [];
+  const candidates: CapabilityMatch[] = [];
 
-    for (const tool of getAllTools()) {
-        const toolVariants = [
-            tool.name,
-            tool.id,
-            tool.description,
-            ...(tool.capabilities || [])
-        ].map(normalizeToolText).filter(Boolean);
+  for (const tool of getAllTools()) {
+    const toolVariants = [tool.name, tool.id, tool.description, ...(tool.capabilities || [])]
+      .map(normalizeToolText)
+      .filter(Boolean);
 
-        for (const action of tool.actions) {
-            const actionVariants = [
-                action.name,
-                action.name.replace(/_/g, ' '),
-                action.description,
-                ...(action.capabilities || []),
-                `${tool.name} ${action.name}`,
-                `${tool.name} ${action.name.replace(/_/g, ' ')}`
-            ].map(normalizeToolText).filter(Boolean);
+    for (const action of tool.actions) {
+      const actionVariants = [
+        action.name,
+        action.name.replace(/_/g, ' '),
+        action.description,
+        ...(action.capabilities || []),
+        `${tool.name} ${action.name}`,
+        `${tool.name} ${action.name.replace(/_/g, ' ')}`,
+      ]
+        .map(normalizeToolText)
+        .filter(Boolean);
 
-            let score = 0;
-            const rationale: string[] = [];
+      let score = 0;
+      const rationale: string[] = [];
 
-            for (const variant of [...toolVariants, ...actionVariants]) {
-                if (!variant) continue;
+      for (const variant of [...toolVariants, ...actionVariants]) {
+        if (!variant) continue;
 
-                if (normalized.includes(variant)) {
-                    score += 12;
-                    rationale.push(`matches ${variant}`);
-                }
-
-                if (variant.split(' ').every(word => normalized.includes(word))) {
-                    score += 6;
-                    rationale.push(`contains key words from ${variant}`);
-                }
-
-                if (normalized.includes(tool.name.toLowerCase()) || normalized.includes(action.name.replace(/_/g, ' ').toLowerCase())) {
-                    score += 5;
-                }
-            }
-
-            if (tool.capabilities?.some(cap => normalized.includes(normalizeToolText(cap)))) {
-                score += 8;
-            }
-
-            if (action.capabilities?.some(cap => normalized.includes(normalizeToolText(cap)))) {
-                score += 10;
-            }
-
-            if (score > 0) {
-                candidates.push({
-                    toolId: tool.id,
-                    toolName: tool.name,
-                    actionName: action.name,
-                    score,
-                    rationale: [...new Set(rationale)]
-                });
-            }
+        if (normalized.includes(variant)) {
+          score += 12;
+          rationale.push(`matches ${variant}`);
         }
-    }
 
-    return candidates.sort((a, b) => b.score - a.score).slice(0, 10);
+        if (variant.split(' ').every((word) => normalized.includes(word))) {
+          score += 6;
+          rationale.push(`contains key words from ${variant}`);
+        }
+
+        if (
+          normalized.includes(tool.name.toLowerCase()) ||
+          normalized.includes(action.name.replace(/_/g, ' ').toLowerCase())
+        ) {
+          score += 5;
+        }
+      }
+
+      if (tool.capabilities?.some((cap) => normalized.includes(normalizeToolText(cap)))) {
+        score += 8;
+      }
+
+      if (action.capabilities?.some((cap) => normalized.includes(normalizeToolText(cap)))) {
+        score += 10;
+      }
+
+      if (score > 0) {
+        candidates.push({
+          toolId: tool.id,
+          toolName: tool.name,
+          actionName: action.name,
+          score,
+          rationale: [...new Set(rationale)],
+        });
+      }
+    }
+  }
+
+  return candidates.sort((a, b) => b.score - a.score).slice(0, 10);
 }
 
 /** Get status summary for all tools (used by UI) */
 export function getToolStatuses(): ToolStatus[] {
-    return getAllTools().map(t => ({
-        id: t.id,
-        name: t.name,
-        icon: t.icon,
-        color: t.color,
-        category: t.category,
-        authenticated: t.isAuthenticated(),
-        capabilities: t.capabilities ?? [],
-        actions: t.actions.map(a => ({
-            name: a.name,
-            description: a.description,
-            sideEffect: a.sideEffect,
-            requiresAuth: a.requiresAuth,
-            capabilities: a.capabilities,
-            // Surfaced so the UI can show which steps will pause for approval.
-            requiresApproval: a.sideEffect === 'irreversible'
-        }))
-    }));
+  return getAllTools().map((t) => ({
+    id: t.id,
+    name: t.name,
+    icon: t.icon,
+    color: t.color,
+    category: t.category,
+    authenticated: t.isAuthenticated(),
+    capabilities: t.capabilities ?? [],
+    actions: t.actions.map((a) => ({
+      name: a.name,
+      description: a.description,
+      sideEffect: a.sideEffect,
+      requiresAuth: a.requiresAuth,
+      capabilities: a.capabilities,
+      // Surfaced so the UI can show which steps will pause for approval.
+      requiresApproval: a.sideEffect === 'irreversible',
+    })),
+  }));
 }
 
 // ==================== CONNECTION STATE ====================
@@ -408,16 +410,16 @@ const connectedToolIds = new Set<string>();
 
 /** Replace the snapshot. Called with the server's answer, nothing else. */
 export function setConnectedTools(toolIds: readonly string[]): void {
-    connectedToolIds.clear();
-    for (const id of toolIds) connectedToolIds.add(id);
+  connectedToolIds.clear();
+  for (const id of toolIds) connectedToolIds.add(id);
 }
 
 /** Whether the server reported this tool as connected. */
 export function isToolConnected(toolId: string): boolean {
-    return connectedToolIds.has(toolId);
+  return connectedToolIds.has(toolId);
 }
 
 /** For tests, and for sign-out. */
 export function clearConnectedTools(): void {
-    connectedToolIds.clear();
+  connectedToolIds.clear();
 }

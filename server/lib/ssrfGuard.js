@@ -113,8 +113,7 @@ function expandIpv6(address) {
   const missing = 8 - head.length - rest.length;
   if (halves.length === 2 && missing < 0) return null;
 
-  const groups =
-    halves.length === 2 ? [...head, ...Array(missing).fill('0'), ...rest] : head;
+  const groups = halves.length === 2 ? [...head, ...Array(missing).fill('0'), ...rest] : head;
   if (groups.length !== 8) return null;
 
   const parsed = groups.map((group) => Number.parseInt(group || '0', 16));
@@ -249,10 +248,9 @@ export async function resolveAllowedAddresses(hostname) {
 
   if (allowed.length === 0) {
     // Either every address is private, or the name is a rebinding attempt.
-    throw new BlockedRequestError(
-      `"${cleaned}" resolves only to private or reserved addresses.`,
-      { reason: 'address_blocked' },
-    );
+    throw new BlockedRequestError(`"${cleaned}" resolves only to private or reserved addresses.`, {
+      reason: 'address_blocked',
+    });
   }
 
   return allowed;
@@ -282,7 +280,10 @@ export function createPinnedLookup(allowedAddresses) {
     }
 
     if (wantsAll) {
-      callback(null, candidates.map((r) => ({ address: r.address, family: r.family })));
+      callback(
+        null,
+        candidates.map((r) => ({ address: r.address, family: r.family })),
+      );
     } else {
       callback(null, candidates[0].address, candidates[0].family);
     }

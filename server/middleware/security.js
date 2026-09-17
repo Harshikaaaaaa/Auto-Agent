@@ -70,10 +70,18 @@ export function buildHelmet() {
         // script and makes no cross-origin request to Google. Consent happens in
         // a top-level popup, which CSP does not govern.
         scriptSrc: ["'self'"],
-        // Task 15 removes the remaining CDN styles/fonts; until then they are
-        // required for the page to render at all.
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://cdn.jsdelivr.net'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        // No CDN style or font origins any more. Task 15 moved Tailwind into a
+        // PostCSS build, self-hosted the fonts via bundled @fontsource packages,
+        // and imported react-flow's CSS through Vite, so every stylesheet and
+        // font is served from our own origin.
+        //
+        // 'unsafe-inline' stays for styles only: the React tree uses inline
+        // `style={...}` attributes and react-flow injects inline styles at
+        // runtime to position nodes. Unlike script-src, an inline-style
+        // allowance does not permit code execution, so this is a low-risk
+        // relaxation and the only one the app genuinely needs.
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        fontSrc: ["'self'", 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
         connectSrc: ["'self'"],
         frameSrc: ["'self'"],
@@ -177,10 +185,14 @@ export function errorHandler(err, req, res, _next) {
 
   // Body parser failures: malformed JSON or a body over the size limit.
   if (err?.type === 'entity.too.large') {
-    return res.status(413).json({ error: 'payload_too_large', message: 'Request body is too large.' });
+    return res
+      .status(413)
+      .json({ error: 'payload_too_large', message: 'Request body is too large.' });
   }
   if (err?.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'invalid_json', message: 'Request body is not valid JSON.' });
+    return res
+      .status(400)
+      .json({ error: 'invalid_json', message: 'Request body is not valid JSON.' });
   }
 
   logger.error({ err, path: req.originalUrl }, 'unhandled request error');

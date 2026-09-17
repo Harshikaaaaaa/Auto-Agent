@@ -59,7 +59,10 @@ const csv = (defaultValue) =>
  * should behave the same as omitting the variable.
  */
 const optionalSecret = () =>
-  z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().min(1).optional());
+  z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional(),
+  );
 
 const intWithDefault = (defaultValue, { min, max } = {}) =>
   z
@@ -111,7 +114,9 @@ const schema = z
     RATE_LIMIT_FETCH_MAX: intWithDefault(60, { min: 1, max: 10_000 }),
 
     // ---- Logging ----
-    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
 
     // ---- Database (MySQL) ----
     DB_HOST: z.string().min(1).default('127.0.0.1'),
@@ -232,7 +237,7 @@ const schema = z
           path: ['SESSION_SECRET'],
           message:
             'SESSION_SECRET is required when AUTH_ENABLED is true. ' +
-            'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+            "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
         });
       } else if (cfg.SESSION_SECRET.length < 32) {
         ctx.addIssue({
@@ -300,7 +305,7 @@ const schema = z
           message:
             'CREDENTIAL_SECRET is required when Google OAuth is configured: stored tokens are ' +
             'encrypted at rest. Generate one with: ' +
-            'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+            "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
         });
       } else if (cfg.CREDENTIAL_SECRET.length < 32) {
         ctx.addIssue({

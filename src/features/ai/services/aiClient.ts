@@ -73,10 +73,12 @@ async function postJson<TResponse>(path: string, body: unknown): Promise<TRespon
       body: JSON.stringify(body),
     });
   } catch (cause) {
-    throw new AiRequestError(
-      'Could not reach the AutoAgent server. Is it running?',
-      { status: 0, code: 'network_error', retryable: true, cause },
-    );
+    throw new AiRequestError('Could not reach the AutoAgent server. Is it running?', {
+      status: 0,
+      code: 'network_error',
+      retryable: true,
+      cause,
+    });
   }
 
   if (!response.ok) {

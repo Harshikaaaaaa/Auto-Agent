@@ -75,10 +75,7 @@ describe('conditional routing with the safe evaluator', () => {
       stateNode('high', { tier: 'high' }, ['tier']),
       stateNode('low', { tier: 'low' }, ['tier']),
     ];
-    const edges = [
-      edge('start', 'high', 'score > 50'),
-      edge('start', 'low', 'score <= 50'),
-    ];
+    const edges = [edge('start', 'high', 'score > 50'), edge('start', 'low', 'score <= 50')];
 
     const { executed } = await runGraph(nodes, edges);
 
@@ -93,10 +90,7 @@ describe('conditional routing with the safe evaluator', () => {
       stateNode('high', { tier: 'high' }, ['tier']),
       stateNode('low', { tier: 'low' }, ['tier']),
     ];
-    const edges = [
-      edge('start', 'high', 'score > 50'),
-      edge('start', 'low', 'score <= 50'),
-    ];
+    const edges = [edge('start', 'high', 'score > 50'), edge('start', 'low', 'score <= 50')];
 
     const { executed } = await runGraph(nodes, edges);
 
@@ -133,9 +127,7 @@ describe('conditional routing with the safe evaluator', () => {
       stateNode('start', { score: 80 }, ['score']),
       stateNode('target', { reached: true }, ['reached']),
     ];
-    const edges = [
-      edge('start', 'target', "constructor.constructor('__conditionEscaped()')()"),
-    ];
+    const edges = [edge('start', 'target', "constructor.constructor('__conditionEscaped()')()")];
 
     const { executed } = await runGraph(nodes, edges);
 

@@ -23,83 +23,83 @@ const STATUS_POLL_MS = 3_000;
  * done with a refresh token at the moment a call needs one.
  */
 export function useTools() {
-    const [toolStatuses, setToolStatuses] = useState<ToolStatus[]>([]);
-    const [authInProgress, setAuthInProgress] = useState<string | null>(null);
-    /** True when the server has Google OAuth configured. */
-    const [oauthConfigured, setOauthConfigured] = useState(true);
-    const mounted = useRef(true);
+  const [toolStatuses, setToolStatuses] = useState<ToolStatus[]>([]);
+  const [authInProgress, setAuthInProgress] = useState<string | null>(null);
+  /** True when the server has Google OAuth configured. */
+  const [oauthConfigured, setOauthConfigured] = useState(true);
+  const mounted = useRef(true);
 
-    const refreshStatuses = useCallback(() => {
-        setToolStatuses(getToolStatuses());
-    }, []);
+  const refreshStatuses = useCallback(() => {
+    setToolStatuses(getToolStatuses());
+  }, []);
 
-    /** Pull connection state from the server, then re-read statuses. */
-    const syncConnections = useCallback(async () => {
-        const snapshot = await fetchConnections();
-        if (!mounted.current) return;
+  /** Pull connection state from the server, then re-read statuses. */
+  const syncConnections = useCallback(async () => {
+    const snapshot = await fetchConnections();
+    if (!mounted.current) return;
 
-        setConnectedTools(snapshot.connections.filter(c => c.connected).map(c => c.toolId));
-        setOauthConfigured(snapshot.configured);
-        refreshStatuses();
-    }, [refreshStatuses]);
+    setConnectedTools(snapshot.connections.filter((c) => c.connected).map((c) => c.toolId));
+    setOauthConfigured(snapshot.configured);
+    refreshStatuses();
+  }, [refreshStatuses]);
 
-    useEffect(() => {
-        mounted.current = true;
-        void syncConnections();
-        return () => {
-            mounted.current = false;
-        };
-    }, [syncConnections]);
-
-    // Local statuses change without a server round trip (the WhatsApp bridge
-    // reports through localStorage), so they are polled more often than the
-    // server-held connections.
-    useEffect(() => {
-        const statusTimer = setInterval(refreshStatuses, STATUS_POLL_MS);
-        const connectionTimer = setInterval(() => void syncConnections(), CONNECTION_POLL_MS);
-        return () => {
-            clearInterval(statusTimer);
-            clearInterval(connectionTimer);
-        };
-    }, [refreshStatuses, syncConnections]);
-
-    const authenticate = useCallback(
-        async (toolId: string) => {
-            const tool = getTool(toolId);
-            if (!tool) return;
-
-            setAuthInProgress(toolId);
-            try {
-                await tool.authenticate();
-                // Read the outcome back from the server rather than assuming it.
-                await syncConnections();
-            } catch (err) {
-                console.error(`Auth failed for ${toolId}:`, err);
-                throw err;
-            } finally {
-                if (mounted.current) setAuthInProgress(null);
-            }
-        },
-        [syncConnections]
-    );
-
-    const disconnect = useCallback(
-        async (toolId: string) => {
-            const tool = getTool(toolId);
-            if (!tool) return;
-            tool.disconnect();
-            await syncConnections();
-        },
-        [syncConnections]
-    );
-
-    return {
-        toolStatuses,
-        authInProgress,
-        oauthConfigured,
-        authenticate,
-        disconnect,
-        refreshStatuses,
-        syncConnections
+  useEffect(() => {
+    mounted.current = true;
+    void syncConnections();
+    return () => {
+      mounted.current = false;
     };
+  }, [syncConnections]);
+
+  // Local statuses change without a server round trip (the WhatsApp bridge
+  // reports through localStorage), so they are polled more often than the
+  // server-held connections.
+  useEffect(() => {
+    const statusTimer = setInterval(refreshStatuses, STATUS_POLL_MS);
+    const connectionTimer = setInterval(() => void syncConnections(), CONNECTION_POLL_MS);
+    return () => {
+      clearInterval(statusTimer);
+      clearInterval(connectionTimer);
+    };
+  }, [refreshStatuses, syncConnections]);
+
+  const authenticate = useCallback(
+    async (toolId: string) => {
+      const tool = getTool(toolId);
+      if (!tool) return;
+
+      setAuthInProgress(toolId);
+      try {
+        await tool.authenticate();
+        // Read the outcome back from the server rather than assuming it.
+        await syncConnections();
+      } catch (err) {
+        console.error(`Auth failed for ${toolId}:`, err);
+        throw err;
+      } finally {
+        if (mounted.current) setAuthInProgress(null);
+      }
+    },
+    [syncConnections],
+  );
+
+  const disconnect = useCallback(
+    async (toolId: string) => {
+      const tool = getTool(toolId);
+      if (!tool) return;
+      tool.disconnect();
+      await syncConnections();
+    },
+    [syncConnections],
+  );
+
+  return {
+    toolStatuses,
+    authInProgress,
+    oauthConfigured,
+    authenticate,
+    disconnect,
+    refreshStatuses,
+    syncConnections,
+  };
 }

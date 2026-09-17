@@ -10,7 +10,12 @@ import { setupWorkflowRoutes } from './workflows/routes.js';
 import { setupFetchRoutes } from './fetch/routes.js';
 import { setupOAuthRoutes } from './oauth/routes.js';
 import { setupGoogleRoutes } from './google/routes.js';
-import { closePool, ensureDatabaseExists, isDatabaseReachable, describeConnection } from './db/pool.js';
+import {
+  closePool,
+  ensureDatabaseExists,
+  isDatabaseReachable,
+  describeConnection,
+} from './db/pool.js';
 import { importLegacyWorkflows, runMigrations } from './db/migrations.js';
 import { OPERATOR_SUBJECT } from './auth/session.js';
 import { env, publicAiConfig } from './config/env.js';
@@ -18,19 +23,19 @@ import { setupAiRoutes } from './ai/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
 import { logger } from './lib/logger.js';
 import {
-    buildCors,
-    buildHelmet,
-    buildLimiters,
-    buildRequestLogger,
-    errorHandler,
+  buildCors,
+  buildHelmet,
+  buildLimiters,
+  buildRequestLogger,
+  errorHandler,
 } from './middleware/security.js';
 import { requireSession, setupAuthRoutes } from './auth/session.js';
 import {
-    AI_PATHS,
-    CONNECTOR_PATHS,
-    FETCH_PATHS,
-    WHATSAPP_PATHS,
-    WORKFLOW_PATHS,
+  AI_PATHS,
+  CONNECTOR_PATHS,
+  FETCH_PATHS,
+  WHATSAPP_PATHS,
+  WORKFLOW_PATHS,
 } from './config/protectedPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,7 +61,7 @@ app.use(express.json({ limit: '1mb' }));
 
 /** Liveness: the process is up. Intentionally cheap and unauthenticated. */
 app.get('/healthz', (_req, res) => {
-    res.json({ status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
+  res.json({ status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
 });
 
 /**
@@ -66,11 +71,11 @@ app.get('/healthz', (_req, res) => {
  * connection details — an unauthenticated probe should not disclose topology.
  */
 app.get('/readyz', async (_req, res) => {
-    const databaseReachable = await isDatabaseReachable();
-    res.status(databaseReachable ? 200 : 503).json({
-        status: databaseReachable ? 'ready' : 'degraded',
-        database: databaseReachable ? 'up' : 'down',
-    });
+  const databaseReachable = await isDatabaseReachable();
+  res.status(databaseReachable ? 200 : 503).json({
+    status: databaseReachable ? 'ready' : 'degraded',
+    database: databaseReachable ? 'up' : 'down',
+  });
 });
 
 setupAuthRoutes(app, { loginLimiter: limiters.auth });
@@ -150,7 +155,7 @@ let lastDisconnectReason = null;
 // Ensure auth directory exists
 const AUTH_DIR = path.join(__dirname, '.wa-auth');
 if (!fs.existsSync(AUTH_DIR)) {
-    fs.mkdirSync(AUTH_DIR, { recursive: true });
+  fs.mkdirSync(AUTH_DIR, { recursive: true });
 }
 
 // Simple in-memory store for recent incoming messages demonstration
@@ -164,35 +169,35 @@ const recentMessages = [];
  * filesystem and returned their contents.
  */
 const sendMessageSchema = z
-    .object({
-        to: z.string().min(1).max(64),
-        text: z.string().max(4096).optional(),
-        mediaUrl: z
-            .string()
-            .max(2048)
-            .refine((value) => {
-                let parsed;
-                try {
-                    parsed = new URL(value);
-                } catch {
-                    return false;
-                }
-                return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-            }, 'mediaUrl must be an absolute http(s) URL')
-            .optional(),
-        mediaType: z.string().max(64).optional(),
-    })
-    .refine((body) => Boolean(body.text) || Boolean(body.mediaUrl), {
-        message: 'Provide "text", "mediaUrl", or both.',
-    });
+  .object({
+    to: z.string().min(1).max(64),
+    text: z.string().max(4096).optional(),
+    mediaUrl: z
+      .string()
+      .max(2048)
+      .refine((value) => {
+        let parsed;
+        try {
+          parsed = new URL(value);
+        } catch {
+          return false;
+        }
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      }, 'mediaUrl must be an absolute http(s) URL')
+      .optional(),
+    mediaType: z.string().max(64).optional(),
+  })
+  .refine((body) => Boolean(body.text) || Boolean(body.mediaUrl), {
+    message: 'Provide "text", "mediaUrl", or both.',
+  });
 
 /** Host only, for logs: a full media URL can carry a signed token in the query. */
 function safeHost(url) {
-    try {
-        return new URL(url).host;
-    } catch {
-        return 'invalid-url';
-    }
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'invalid-url';
+  }
 }
 
 /**
@@ -203,135 +208,136 @@ function safeHost(url) {
  * separate deployment step instead.
  */
 async function prepareDatabase() {
-    if (!env.DB_AUTO_MIGRATE) {
-        logger.info('DB_AUTO_MIGRATE is off; skipping schema setup');
-        return;
-    }
+  if (!env.DB_AUTO_MIGRATE) {
+    logger.info('DB_AUTO_MIGRATE is off; skipping schema setup');
+    return;
+  }
 
-    await ensureDatabaseExists();
-    const applied = await runMigrations();
+  await ensureDatabaseExists();
+  const applied = await runMigrations();
+  logger.info({ ...describeConnection(), migrationsApplied: applied }, 'database ready');
+
+  // One-time move off the legacy JSON file. Uses INSERT IGNORE, so this is a
+  // no-op once the rows exist, and the source file is left in place.
+  const imported = await importLegacyWorkflows({ ownerId: OPERATOR_SUBJECT });
+  if (imported.imported > 0) {
     logger.info(
-        { ...describeConnection(), migrationsApplied: applied },
-        'database ready',
+      { imported: imported.imported, skipped: imported.skipped },
+      'imported workflows from the legacy JSON file',
     );
-
-    // One-time move off the legacy JSON file. Uses INSERT IGNORE, so this is a
-    // no-op once the rows exist, and the source file is left in place.
-    const imported = await importLegacyWorkflows({ ownerId: OPERATOR_SUBJECT });
-    if (imported.imported > 0) {
-        logger.info(
-            { imported: imported.imported, skipped: imported.skipped },
-            'imported workflows from the legacy JSON file',
-        );
-    }
+  }
 }
 
 async function startServer() {
-    try {
-        await prepareDatabase();
-    } catch (err) {
-        // Without a database every workflow route fails, so refusing to start is
-        // clearer than serving an app that cannot save anything.
-        logger.error(
-            { err, ...describeConnection() },
-            'could not prepare the database; refusing to start',
-        );
-        process.exitCode = 1;
-        return;
-    }
+  try {
+    await prepareDatabase();
+  } catch (err) {
+    // Without a database every workflow route fails, so refusing to start is
+    // clearer than serving an app that cannot save anything.
+    logger.error(
+      { err, ...describeConnection() },
+      'could not prepare the database; refusing to start',
+    );
+    process.exitCode = 1;
+    return;
+  }
 
-    // Shared state
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  // Shared state
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-    const startSock = async () => {
-        sock = makeWASocket({  // Removed .default as per successful import logic
-            auth: state,
-            syncFullHistory: false, // keep it light
-            // implement a basic msg retry handler if needed
+  const startSock = async () => {
+    sock = makeWASocket({
+      // Removed .default as per successful import logic
+      auth: state,
+      syncFullHistory: false, // keep it light
+      // implement a basic msg retry handler if needed
+    });
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        QRCode.toDataURL(qr, (err, url) => {
+          if (!err) {
+            qrCodeData = url;
+            connectionStatus = 'scan_qr';
+          }
         });
-
-        sock.ev.on('connection.update', (update) => {
-            const { connection, lastDisconnect, qr } = update;
-            if (qr) {
-                QRCode.toDataURL(qr, (err, url) => {
-                    if (!err) {
-                        qrCodeData = url;
-                        connectionStatus = 'scan_qr';
-                    }
-                });
-                QRCode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
-                    // Printed raw: an ASCII QR code is unreadable through a
-                    // structured logger, and operators scan this from the console.
-                    if (!err) process.stdout.write(`${url}\n`);
-                });
-            }
-            if (connection === 'close') {
-                const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                logger.warn({ shouldReconnect }, 'WhatsApp connection closed');
-                connectionStatus = 'disconnected';
-                lastDisconnectReason = lastDisconnect?.error?.message;
-
-                if (shouldReconnect) {
-                    setTimeout(startSock, 2000);
-                } else {
-                    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-                    setTimeout(startSock, 1000);
-                }
-            } else if (connection === 'open') {
-                logger.info('WhatsApp connected');
-                connectionStatus = 'connected';
-                qrCodeData = null;
-            }
+        QRCode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
+          // Printed raw: an ASCII QR code is unreadable through a
+          // structured logger, and operators scan this from the console.
+          if (!err) process.stdout.write(`${url}\n`);
         });
+      }
+      if (connection === 'close') {
+        const shouldReconnect =
+          lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        logger.warn({ shouldReconnect }, 'WhatsApp connection closed');
+        connectionStatus = 'disconnected';
+        lastDisconnectReason = lastDisconnect?.error?.message;
 
-        sock.ev.on('creds.update', saveCreds);
+        if (shouldReconnect) {
+          setTimeout(startSock, 2000);
+        } else {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+          setTimeout(startSock, 1000);
+        }
+      } else if (connection === 'open') {
+        logger.info('WhatsApp connected');
+        connectionStatus = 'connected';
+        qrCodeData = null;
+      }
+    });
 
-        // Simple message listener to populate a volatile 'recentMessages' list for testing
-        sock.ev.on('messages.upsert', async (m) => {
-            if (m.type === 'notify') {
-                for (const msg of m.messages) {
-                    if (!msg.message) continue;
-                    // Extract text
-                    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-                    const from = msg.key.remoteJid;
-                    const pushName = msg.pushName;
+    sock.ev.on('creds.update', saveCreds);
 
-                    recentMessages.unshift({
-                        id: msg.key.id,
-                        from,
-                        pushName,
-                        text,
-                        timestamp: msg.messageTimestamp,
-                        fromMe: msg.key.fromMe
-                    });
+    // Simple message listener to populate a volatile 'recentMessages' list for testing
+    sock.ev.on('messages.upsert', async (m) => {
+      if (m.type === 'notify') {
+        for (const msg of m.messages) {
+          if (!msg.message) continue;
+          // Extract text
+          const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+          const from = msg.key.remoteJid;
+          const pushName = msg.pushName;
 
-                    // Keep list small
-                    if (recentMessages.length > 50) recentMessages.pop();
-                }
-            }
-        });
-    };
+          recentMessages.unshift({
+            id: msg.key.id,
+            from,
+            pushName,
+            text,
+            timestamp: msg.messageTimestamp,
+            fromMe: msg.key.fromMe,
+          });
 
-    await startSock();
+          // Keep list small
+          if (recentMessages.length > 50) recentMessages.pop();
+        }
+      }
+    });
+  };
 
-    // ---- WhatsApp bridge endpoints ----
-    // All of these are session-gated. Before this, anyone who could reach the
-    // port could send messages from the linked account (/send), read recent
-    // messages (/messages), or wipe its credentials (/disconnect).
-    app.use(WHATSAPP_PATHS, limiters.general, requireSession);
+  await startSock();
 
-    app.get('/status', (req, res) => res.json({
-        status: connectionStatus,
-        user: sock?.user,
-        lastDisconnectReason,
-        qrAvailable: !!qrCodeData,
-        qrUrl: qrCodeData ? '/qr' : null
-    }));
+  // ---- WhatsApp bridge endpoints ----
+  // All of these are session-gated. Before this, anyone who could reach the
+  // port could send messages from the linked account (/send), read recent
+  // messages (/messages), or wipe its credentials (/disconnect).
+  app.use(WHATSAPP_PATHS, limiters.general, requireSession);
 
-    app.get('/qr', (req, res) => {
-        if (connectionStatus === 'connected') {
-            if (req.accepts('html')) {
-                return res.send(`
+  app.get('/status', (req, res) =>
+    res.json({
+      status: connectionStatus,
+      user: sock?.user,
+      lastDisconnectReason,
+      qrAvailable: !!qrCodeData,
+      qrUrl: qrCodeData ? '/qr' : null,
+    }),
+  );
+
+  app.get('/qr', (req, res) => {
+    if (connectionStatus === 'connected') {
+      if (req.accepts('html')) {
+        return res.send(`
                     <html lang="en">
                         <head>
                             <meta charset="UTF-8" />
@@ -354,13 +360,13 @@ async function startServer() {
                         </body>
                     </html>
                 `);
-            }
-            return res.status(400).json({ error: 'Connected' });
-        }
+      }
+      return res.status(400).json({ error: 'Connected' });
+    }
 
-        if (!qrCodeData) {
-            if (req.accepts('html')) {
-                return res.send(`
+    if (!qrCodeData) {
+      if (req.accepts('html')) {
+        return res.send(`
                     <html lang="en">
                         <head>
                             <meta charset="UTF-8" />
@@ -383,12 +389,12 @@ async function startServer() {
                         </body>
                     </html>
                 `);
-            }
-            return res.status(503).json({ error: 'Generating QR...' });
-        }
+      }
+      return res.status(503).json({ error: 'Generating QR...' });
+    }
 
-        if (req.accepts('html')) {
-            return res.send(`
+    if (req.accepts('html')) {
+      return res.send(`
                 <html lang="en">
                     <head>
                         <meta charset="UTF-8" />
@@ -415,124 +421,124 @@ async function startServer() {
                     </body>
                 </html>
             `);
-        }
+    }
 
-        res.json({ qr: qrCodeData });
+    res.json({ qr: qrCodeData });
+  });
+
+  app.post('/send', limiters.send, async (req, res) => {
+    // Validate before checking connectivity: a malformed or hostile payload
+    // should be rejected on its own merits, not incidentally masked by the
+    // bridge happening to be offline.
+    const parsed = sendMessageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'invalid_request',
+        message: 'Provide "to" plus "text" and/or an http(s) "mediaUrl".',
+        issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+    const { to, text, mediaUrl, mediaType } = parsed.data;
+
+    if (connectionStatus !== 'connected') {
+      return res.status(503).json({
+        error: 'bridge_not_connected',
+        message: 'The WhatsApp bridge is not connected.',
+      });
+    }
+
+    try {
+      const jid = to.includes('@s.whatsapp.net') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+
+      if (mediaUrl) {
+        // Normalize mediaType: "image/jpg" -> "image", "video/mp4" -> "video", etc.
+        let rawType = (mediaType || 'image').toString().toLowerCase().trim();
+        if (rawType.includes('/')) rawType = rawType.split('/')[0];
+        // Map to Baileys-supported keys
+        const typeMap = { image: 'image', video: 'video', audio: 'audio', document: 'document' };
+        const type = typeMap[rawType] || 'image';
+
+        logger.info({ type, host: safeHost(mediaUrl) }, 'sending WhatsApp media');
+
+        // Only remote http(s) media is accepted.
+        //
+        // The previous implementation fell back to treating mediaUrl as a
+        // filesystem path and read it with path.resolve + readFileSync,
+        // which let any caller exfiltrate arbitrary server files. It also
+        // used CommonJS require() inside this ES module, so that branch
+        // threw at runtime regardless. Both are gone; the schema rejects
+        // anything that is not an http(s) URL.
+        await sock.sendMessage(jid, { [type]: { url: mediaUrl }, caption: text || '' });
+      } else {
+        // Send text only
+        await sock.sendMessage(jid, { text });
+      }
+
+      res.json({ success: true, to: jid });
+    } catch (e) {
+      logger.error({ err: e }, 'WhatsApp send failed');
+      res.status(500).json({ error: 'send_failed', message: 'Could not send the message.' });
+    }
+  });
+
+  app.get('/messages', (req, res) => {
+    // Return in-memory recent messages
+    // Optional filter: ?jid=...
+    const { jid } = req.query;
+    let msgs = recentMessages;
+    if (jid) {
+      msgs = msgs.filter((m) => m.from === jid || (m.fromMe && jid === sock?.user?.id)); // loose filter
+    }
+    res.json({ messages: msgs.slice(0, 20) });
+  });
+
+  app.post('/disconnect', async (req, res) => {
+    try {
+      await sock.logout();
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      res.json({ success: true });
+      // The connection.close handler will likely restart the socket logic to generate a new QR
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Terminal error handler. Registered last so it sees errors from every
+  // route and from CORS rejections.
+  app.use(errorHandler);
+
+  const server = app.listen(PORT, () => {
+    logger.info({ port: PORT, authEnabled: env.AUTH_ENABLED }, 'AutoAgent server listening');
+    void reportAiConfiguration();
+  });
+
+  // Graceful shutdown: stop accepting connections, then release the database
+  // pool so in-flight transactions are not cut mid-write.
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'shutting down');
+
+    const forceExit = setTimeout(() => {
+      logger.warn('shutdown timed out; exiting');
+      process.exit(1);
+    }, 10_000);
+    forceExit.unref();
+
+    server.close(async () => {
+      try {
+        await closePool();
+      } catch (err) {
+        logger.error({ err }, 'failed to close the database pool');
+      }
+      clearTimeout(forceExit);
+      process.exit(0);
     });
+  };
 
-    app.post('/send', limiters.send, async (req, res) => {
-        // Validate before checking connectivity: a malformed or hostile payload
-        // should be rejected on its own merits, not incidentally masked by the
-        // bridge happening to be offline.
-        const parsed = sendMessageSchema.safeParse(req.body);
-        if (!parsed.success) {
-            return res.status(400).json({
-                error: 'invalid_request',
-                message: 'Provide "to" plus "text" and/or an http(s) "mediaUrl".',
-                issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-            });
-        }
-        const { to, text, mediaUrl, mediaType } = parsed.data;
-
-        if (connectionStatus !== 'connected') {
-            return res.status(503).json({
-                error: 'bridge_not_connected',
-                message: 'The WhatsApp bridge is not connected.',
-            });
-        }
-
-        try {
-            const jid = to.includes('@s.whatsapp.net') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
-
-            if (mediaUrl) {
-                // Normalize mediaType: "image/jpg" -> "image", "video/mp4" -> "video", etc.
-                let rawType = (mediaType || 'image').toString().toLowerCase().trim();
-                if (rawType.includes('/')) rawType = rawType.split('/')[0];
-                // Map to Baileys-supported keys
-                const typeMap = { image: 'image', video: 'video', audio: 'audio', document: 'document' };
-                const type = typeMap[rawType] || 'image';
-
-                logger.info({ type, host: safeHost(mediaUrl) }, 'sending WhatsApp media');
-
-                // Only remote http(s) media is accepted.
-                //
-                // The previous implementation fell back to treating mediaUrl as a
-                // filesystem path and read it with path.resolve + readFileSync,
-                // which let any caller exfiltrate arbitrary server files. It also
-                // used CommonJS require() inside this ES module, so that branch
-                // threw at runtime regardless. Both are gone; the schema rejects
-                // anything that is not an http(s) URL.
-                await sock.sendMessage(jid, { [type]: { url: mediaUrl }, caption: text || '' });
-            } else {
-                // Send text only
-                await sock.sendMessage(jid, { text });
-            }
-
-            res.json({ success: true, to: jid });
-        } catch (e) {
-            logger.error({ err: e }, 'WhatsApp send failed');
-            res.status(500).json({ error: 'send_failed', message: 'Could not send the message.' });
-        }
-    });
-
-    app.get('/messages', (req, res) => {
-        // Return in-memory recent messages
-        // Optional filter: ?jid=...
-        const { jid } = req.query;
-        let msgs = recentMessages;
-        if (jid) {
-            msgs = msgs.filter(m => m.from === jid || (m.fromMe && jid === sock?.user?.id)); // loose filter
-        }
-        res.json({ messages: msgs.slice(0, 20) });
-    });
-
-    app.post('/disconnect', async (req, res) => {
-        try {
-            await sock.logout();
-            fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-            res.json({ success: true });
-            // The connection.close handler will likely restart the socket logic to generate a new QR
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    // Terminal error handler. Registered last so it sees errors from every
-    // route and from CORS rejections.
-    app.use(errorHandler);
-
-    const server = app.listen(PORT, () => {
-        logger.info({ port: PORT, authEnabled: env.AUTH_ENABLED }, 'AutoAgent server listening');
-        void reportAiConfiguration();
-    });
-
-    // Graceful shutdown: stop accepting connections, then release the database
-    // pool so in-flight transactions are not cut mid-write.
-    let shuttingDown = false;
-    const shutdown = async (signal) => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        logger.info({ signal }, 'shutting down');
-
-        const forceExit = setTimeout(() => {
-            logger.warn('shutdown timed out; exiting');
-            process.exit(1);
-        }, 10_000);
-        forceExit.unref();
-
-        server.close(async () => {
-            try {
-                await closePool();
-            } catch (err) {
-                logger.error({ err }, 'failed to close the database pool');
-            }
-            clearTimeout(forceExit);
-            process.exit(0);
-        });
-    };
-
-    process.on('SIGTERM', () => void shutdown('SIGTERM'));
-    process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
 startServer();

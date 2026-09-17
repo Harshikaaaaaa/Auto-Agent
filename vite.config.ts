@@ -21,6 +21,23 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
 
+    build: {
+      rollupOptions: {
+        output: {
+          // Split the large, rarely-changing third-party libraries into their
+          // own chunks. This keeps the app chunk under the 500 kB warning and,
+          // more usefully, lets the browser cache the vendor code across
+          // deploys — a change to our code no longer busts react/reactflow.
+          manualChunks: {
+            // react-dom pulls react in with it; keeping them together with
+            // reactflow (the app's heaviest dependency) yields one large,
+            // stable vendor chunk the browser caches across deploys.
+            vendor: ['react', 'react-dom', 'reactflow'],
+          },
+        },
+      },
+    },
+
     // NOTE: there is deliberately NO `define` block here.
     //
     // This file previously inlined GEMINI_API_KEY, OPENROUTER_API_KEY, and

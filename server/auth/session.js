@@ -41,8 +41,14 @@ function sign(payloadB64) {
  * Both sides are hashed first so `timingSafeEqual` always sees equal lengths.
  */
 export function safeCompare(a, b) {
-  const ha = crypto.createHash('sha256').update(String(a ?? '')).digest();
-  const hb = crypto.createHash('sha256').update(String(b ?? '')).digest();
+  const ha = crypto
+    .createHash('sha256')
+    .update(String(a ?? ''))
+    .digest();
+  const hb = crypto
+    .createHash('sha256')
+    .update(String(b ?? ''))
+    .digest();
   return crypto.timingSafeEqual(ha, hb);
 }
 

@@ -312,9 +312,9 @@ describe('the real policy applies without injection', () => {
   });
 
   it('refuses the metadata endpoint', async () => {
-    await expect(
-      guardedFetch({ url: 'http://169.254.169.254/latest/meta-data/' }),
-    ).rejects.toThrow(/private or reserved range/i);
+    await expect(guardedFetch({ url: 'http://169.254.169.254/latest/meta-data/' })).rejects.toThrow(
+      /private or reserved range/i,
+    );
   });
 
   it('refuses localhost by name', async () => {

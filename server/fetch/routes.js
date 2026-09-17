@@ -149,10 +149,10 @@ function requestOnce({ url, method, headers, maxBytes, timeoutMs, resolveAddress
           response.on('close', () => {
             if (!truncated) return;
             reject(
-              new BlockedRequestError(
-                `That response exceeded the ${maxBytes} byte limit.`,
-                { reason: 'response_too_large', url: url.href },
-              ),
+              new BlockedRequestError(`That response exceeded the ${maxBytes} byte limit.`, {
+                reason: 'response_too_large',
+                url: url.href,
+              }),
             );
           });
 
@@ -238,10 +238,9 @@ export async function guardedFetch({
     currentUrl = nextUrl;
   }
 
-  throw new BlockedRequestError(
-    `That URL redirected more than ${env.FETCH_MAX_REDIRECTS} times.`,
-    { reason: 'too_many_redirects' },
-  );
+  throw new BlockedRequestError(`That URL redirected more than ${env.FETCH_MAX_REDIRECTS} times.`, {
+    reason: 'too_many_redirects',
+  });
 }
 
 export function setupFetchRoutes(app) {

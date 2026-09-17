@@ -32,15 +32,15 @@ let cachedKey;
  * every replica — this is key derivation, not password hashing.
  */
 function key() {
-    if (!cachedKey) {
-        cachedKey = crypto.scryptSync(env.CREDENTIAL_SECRET, 'autoagent:credentials:v1', KEY_BYTES);
-    }
-    return cachedKey;
+  if (!cachedKey) {
+    cachedKey = crypto.scryptSync(env.CREDENTIAL_SECRET, 'autoagent:credentials:v1', KEY_BYTES);
+  }
+  return cachedKey;
 }
 
 /** For tests that change the secret between cases. */
 export function resetKeyCache() {
-    cachedKey = undefined;
+  cachedKey = undefined;
 }
 
 /**
@@ -48,21 +48,21 @@ export function resetKeyCache() {
  * @returns `v1.<iv>.<tag>.<ciphertext>`, all base64url.
  */
 export function encryptSecret(plaintext) {
-    if (typeof plaintext !== 'string' || plaintext.length === 0) {
-        throw new Error('encryptSecret requires a non-empty string');
-    }
+  if (typeof plaintext !== 'string' || plaintext.length === 0) {
+    throw new Error('encryptSecret requires a non-empty string');
+  }
 
-    const iv = crypto.randomBytes(IV_BYTES);
-    const cipher = crypto.createCipheriv(ALGORITHM, key(), iv);
-    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
+  const iv = crypto.randomBytes(IV_BYTES);
+  const cipher = crypto.createCipheriv(ALGORITHM, key(), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
 
-    return [
-        VERSION,
-        iv.toString('base64url'),
-        tag.toString('base64url'),
-        ciphertext.toString('base64url'),
-    ].join('.');
+  return [
+    VERSION,
+    iv.toString('base64url'),
+    tag.toString('base64url'),
+    ciphertext.toString('base64url'),
+  ].join('.');
 }
 
 /**
@@ -70,23 +70,19 @@ export function encryptSecret(plaintext) {
  * @throws when the payload is malformed, or the key or ciphertext is wrong.
  */
 export function decryptSecret(payload) {
-    if (typeof payload !== 'string') throw new Error('decryptSecret requires a string');
+  if (typeof payload !== 'string') throw new Error('decryptSecret requires a string');
 
-    const parts = payload.split('.');
-    if (parts.length !== 4 || parts[0] !== VERSION) {
-        throw new Error('stored credential is not in a recognised format');
-    }
+  const parts = payload.split('.');
+  if (parts.length !== 4 || parts[0] !== VERSION) {
+    throw new Error('stored credential is not in a recognised format');
+  }
 
-    const [, ivPart, tagPart, dataPart] = parts;
-    const decipher = crypto.createDecipheriv(
-        ALGORITHM,
-        key(),
-        Buffer.from(ivPart, 'base64url'),
-    );
-    decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
+  const [, ivPart, tagPart, dataPart] = parts;
+  const decipher = crypto.createDecipheriv(ALGORITHM, key(), Buffer.from(ivPart, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
 
-    return Buffer.concat([
-        decipher.update(Buffer.from(dataPart, 'base64url')),
-        decipher.final(),
-    ]).toString('utf8');
+  return Buffer.concat([
+    decipher.update(Buffer.from(dataPart, 'base64url')),
+    decipher.final(),
+  ]).toString('utf8');
 }

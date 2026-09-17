@@ -216,7 +216,10 @@ describe('POST /api/ai/plan', () => {
   });
 
   it('passes a rate limit through as 429 and flags it retryable', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('slow down', { status: 429 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('slow down', { status: 429 })),
+    );
     const { status, json } = await post('/api/ai/plan', { prompt: 'hello', catalog: [] });
 
     expect(status).toBe(429);

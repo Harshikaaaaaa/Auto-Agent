@@ -33,54 +33,54 @@
  * the user should be told to do about it.
  */
 export type FailureKind =
-    /** Credentials are missing, expired or rejected. A human must reconnect. */
-    | 'auth'
-    /** Throttled upstream. Waiting helps. */
-    | 'rate_limit'
-    /** The inputs are wrong. Retrying sends the same wrong inputs. */
-    | 'invalid_input'
-    /** No tool provides this. The graph has to change. */
-    | 'unsupported'
-    /** A network or upstream hiccup. Waiting plausibly helps. */
-    | 'transient'
-    /** Anything else. Reported, not retried. */
-    | 'permanent';
+  /** Credentials are missing, expired or rejected. A human must reconnect. */
+  | 'auth'
+  /** Throttled upstream. Waiting helps. */
+  | 'rate_limit'
+  /** The inputs are wrong. Retrying sends the same wrong inputs. */
+  | 'invalid_input'
+  /** No tool provides this. The graph has to change. */
+  | 'unsupported'
+  /** A network or upstream hiccup. Waiting plausibly helps. */
+  | 'transient'
+  /** Anything else. Reported, not retried. */
+  | 'permanent';
 
 /** Failure kinds where trying again could plausibly succeed. */
 const RETRYABLE: ReadonlySet<FailureKind> = new Set<FailureKind>(['rate_limit', 'transient']);
 
 export function isRetryable(kind: FailureKind): boolean {
-    return RETRYABLE.has(kind);
+  return RETRYABLE.has(kind);
 }
 
 /** A node failure, carrying enough to decide what happens next. */
 export class NodeExecutionError extends Error {
-    readonly kind: FailureKind;
-    readonly nodeId?: string;
-    readonly toolId?: string;
-    readonly toolAction?: string;
+  readonly kind: FailureKind;
+  readonly nodeId?: string;
+  readonly toolId?: string;
+  readonly toolAction?: string;
 
-    constructor(
-        message: string,
-        options: {
-            kind: FailureKind;
-            nodeId?: string;
-            toolId?: string;
-            toolAction?: string;
-            cause?: unknown;
-        }
-    ) {
-        super(message, { cause: options.cause });
-        this.name = 'NodeExecutionError';
-        this.kind = options.kind;
-        this.nodeId = options.nodeId;
-        this.toolId = options.toolId;
-        this.toolAction = options.toolAction;
-    }
+  constructor(
+    message: string,
+    options: {
+      kind: FailureKind;
+      nodeId?: string;
+      toolId?: string;
+      toolAction?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message, { cause: options.cause });
+    this.name = 'NodeExecutionError';
+    this.kind = options.kind;
+    this.nodeId = options.nodeId;
+    this.toolId = options.toolId;
+    this.toolAction = options.toolAction;
+  }
 
-    get retryable(): boolean {
-        return isRetryable(this.kind);
-    }
+  get retryable(): boolean {
+    return isRetryable(this.kind);
+  }
 }
 
 /**
@@ -103,42 +103,42 @@ export const UNSUPPORTED_STEP_PREFIX = 'Unsupported step:';
  * are deliberately generous so genuine network flakiness is still caught.
  */
 export function classifyFailureMessage(raw: string): FailureKind {
-    const message = String(raw ?? '');
+  const message = String(raw ?? '');
 
-    if (message.startsWith(UNSUPPORTED_STEP_PREFIX)) return 'unsupported';
+  if (message.startsWith(UNSUPPORTED_STEP_PREFIX)) return 'unsupported';
 
-    const text = message.toLowerCase();
+  const text = message.toLowerCase();
 
-    // Auth first: an expired token often also reads like a generic failure.
-    if (
-        /not authenticated|authentication expired|authentication|unauthori[sz]ed|reconnect|invalid_grant|invalid credentials|access denied|forbidden|connect it first|\b401\b|\b403\b/.test(
-            text
-        )
-    ) {
-        return 'auth';
-    }
+  // Auth first: an expired token often also reads like a generic failure.
+  if (
+    /not authenticated|authentication expired|authentication|unauthori[sz]ed|reconnect|invalid_grant|invalid credentials|access denied|forbidden|connect it first|\b401\b|\b403\b/.test(
+      text,
+    )
+  ) {
+    return 'auth';
+  }
 
-    if (/rate limit|ratelimit|too many requests|quota|throttl|\b429\b/.test(text)) {
-        return 'rate_limit';
-    }
+  if (/rate limit|ratelimit|too many requests|quota|throttl|\b429\b/.test(text)) {
+    return 'rate_limit';
+  }
 
-    if (
-        /missing|not provided|no source_url|no content|invalid |validation failed|was rejected|malformed|required|exceeds|too large|not found|\b400\b|\b404\b|\b422\b/.test(
-            text
-        )
-    ) {
-        return 'invalid_input';
-    }
+  if (
+    /missing|not provided|no source_url|no content|invalid |validation failed|was rejected|malformed|required|exceeds|too large|not found|\b400\b|\b404\b|\b422\b/.test(
+      text,
+    )
+  ) {
+    return 'invalid_input';
+  }
 
-    if (
-        /timed out|timeout|network|econnrefused|econnreset|enotfound|socket hang up|fetch failed|could not reach|unavailable|temporarily|\b408\b|\b425\b|\b500\b|\b502\b|\b503\b|\b504\b/.test(
-            text
-        )
-    ) {
-        return 'transient';
-    }
+  if (
+    /timed out|timeout|network|econnrefused|econnreset|enotfound|socket hang up|fetch failed|could not reach|unavailable|temporarily|\b408\b|\b425\b|\b500\b|\b502\b|\b503\b|\b504\b/.test(
+      text,
+    )
+  ) {
+    return 'transient';
+  }
 
-    return 'permanent';
+  return 'permanent';
 }
 
 /**
@@ -150,29 +150,29 @@ export function classifyFailureMessage(raw: string): FailureKind {
  * succeeded.
  */
 export function detectActionFailure(
-    result: Record<string, unknown> | null | undefined
+  result: Record<string, unknown> | null | undefined,
 ): { message: string; kind: FailureKind } | null {
-    if (!result || typeof result !== 'object') return null;
+  if (!result || typeof result !== 'object') return null;
 
-    const declared = result.error;
-    if (typeof declared === 'string' && declared.trim().length > 0) {
-        return { message: declared.trim(), kind: classifyFailureMessage(declared) };
-    }
-    // A non-string truthy error still means failure; do not let a shape mismatch
-    // turn a failure into a success.
-    if (declared !== undefined && declared !== null && typeof declared !== 'string') {
-        const message = String(declared);
-        return { message, kind: classifyFailureMessage(message) };
-    }
+  const declared = result.error;
+  if (typeof declared === 'string' && declared.trim().length > 0) {
+    return { message: declared.trim(), kind: classifyFailureMessage(declared) };
+  }
+  // A non-string truthy error still means failure; do not let a shape mismatch
+  // turn a failure into a success.
+  if (declared !== undefined && declared !== null && typeof declared !== 'string') {
+    const message = String(declared);
+    return { message, kind: classifyFailureMessage(message) };
+  }
 
-    for (const flag of ['downloaded', 'success', 'sent'] as const) {
-        if (result[flag] === false) {
-            const message = `The action reported ${flag} = false.`;
-            return { message, kind: 'permanent' };
-        }
+  for (const flag of ['downloaded', 'success', 'sent'] as const) {
+    if (result[flag] === false) {
+      const message = `The action reported ${flag} = false.`;
+      return { message, kind: 'permanent' };
     }
+  }
 
-    return null;
+  return null;
 }
 
 // ------------------------------------------------------------------ backoff
@@ -192,26 +192,26 @@ export const MAX_RETRY_ATTEMPTS = 2;
  * `random` is injectable so the tests are not probabilistic.
  */
 export function retryDelayMs(attempt: number, random: () => number = Math.random): number {
-    const exponential = RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1);
-    const capped = Math.min(exponential, RETRY_MAX_DELAY_MS);
-    const jitter = capped * 0.25 * (random() * 2 - 1);
-    return Math.max(0, Math.round(capped + jitter));
+  const exponential = RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1);
+  const capped = Math.min(exponential, RETRY_MAX_DELAY_MS);
+  const jitter = capped * 0.25 * (random() * 2 - 1);
+  return Math.max(0, Math.round(capped + jitter));
 }
 
 /** What the user should do about a failure of this kind. */
 export function remedyFor(kind: FailureKind): string {
-    switch (kind) {
-        case 'auth':
-            return 'Reconnect the tool and run it again.';
-        case 'rate_limit':
-            return 'The service is throttling us. Wait a little and run it again.';
-        case 'invalid_input':
-            return 'Fix the step configuration — one of its inputs is missing or wrong.';
-        case 'unsupported':
-            return 'Connect a tool that can do this, or remove the step.';
-        case 'transient':
-            return 'This looks temporary. Running it again may work.';
-        case 'permanent':
-            return 'This will not fix itself by retrying. Check the step and the logs.';
-    }
+  switch (kind) {
+    case 'auth':
+      return 'Reconnect the tool and run it again.';
+    case 'rate_limit':
+      return 'The service is throttling us. Wait a little and run it again.';
+    case 'invalid_input':
+      return 'Fix the step configuration — one of its inputs is missing or wrong.';
+    case 'unsupported':
+      return 'Connect a tool that can do this, or remove the step.';
+    case 'transient':
+      return 'This looks temporary. Running it again may work.';
+    case 'permanent':
+      return 'This will not fix itself by retrying. Check the step and the logs.';
+  }
 }

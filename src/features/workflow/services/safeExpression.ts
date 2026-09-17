@@ -266,7 +266,9 @@ function measureDepth(expression: string): number {
 /** Count operator tokens outside string literals. */
 function countOperators(expression: string): number {
   const withoutStrings = expression.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
-  const matches = withoutStrings.match(/(==|!=|<=|>=|<|>|\+|-|\*|\/|%|\band\b|\bor\b|\bnot\b|\bin\b)/g);
+  const matches = withoutStrings.match(
+    /(==|!=|<=|>=|<|>|\+|-|\*|\/|%|\band\b|\bor\b|\bnot\b|\bin\b)/g,
+  );
   return matches ? matches.length : 0;
 }
 

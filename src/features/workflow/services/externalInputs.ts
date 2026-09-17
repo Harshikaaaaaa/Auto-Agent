@@ -16,20 +16,20 @@ import type { NodeData, WorkflowNode } from '@features/workflow/types';
 
 /** Keys on this node that the user has to fill in. */
 export function externalInputKeysOf(data: NodeData): string[] {
-    return data.stateContract?.externalInputKeys ?? [];
+  return data.stateContract?.externalInputKeys ?? [];
 }
 
 /** Current value of an external input, as a string. Empty when unset. */
 export function externalInputValue(node: WorkflowNode, key: string): string {
-    const value = node.data[key];
-    return value === undefined || value === null ? '' : String(value);
+  const value = node.data[key];
+  return value === undefined || value === null ? '' : String(value);
 }
 
 /** External inputs on this node that are still blank. */
 export function missingExternalKeys(node: WorkflowNode): string[] {
-    return externalInputKeysOf(node.data).filter(
-        key => externalInputValue(node, key).trim().length === 0
-    );
+  return externalInputKeysOf(node.data).filter(
+    (key) => externalInputValue(node, key).trim().length === 0,
+  );
 }
 
 /**
@@ -40,16 +40,16 @@ export function missingExternalKeys(node: WorkflowNode): string[] {
  * the node's own data does not hold it, which is why the pre-run check passes it.
  */
 export function missingExternalInputs(
-    nodes: WorkflowNode[],
-    alreadyAvailable: ReadonlySet<string> = new Set()
+  nodes: WorkflowNode[],
+  alreadyAvailable: ReadonlySet<string> = new Set(),
 ): Array<{ nodeId: string; label: string; key: string }> {
-    return nodes.flatMap(node =>
-        missingExternalKeys(node)
-            .filter(key => !alreadyAvailable.has(key))
-            .map(key => ({
-                nodeId: node.id,
-                label: node.data.label,
-                key
-            }))
-    );
+  return nodes.flatMap((node) =>
+    missingExternalKeys(node)
+      .filter((key) => !alreadyAvailable.has(key))
+      .map((key) => ({
+        nodeId: node.id,
+        label: node.data.label,
+        key,
+      })),
+  );
 }

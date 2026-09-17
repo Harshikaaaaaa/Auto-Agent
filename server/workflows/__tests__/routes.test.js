@@ -268,14 +268,16 @@ describe.skipIf(!mysqlAvailable)('workflow API', () => {
   });
 
   describe('owner scoping', () => {
-    it('never exposes another owner\'s workflow over HTTP', async () => {
+    it("never exposes another owner's workflow over HTTP", async () => {
       currentOwner = 'owner-a';
       const theirs = await api('/api/workflows', { method: 'POST', body: validBody('Private') });
 
       currentOwner = 'owner-b';
       expect((await api('/api/workflows')).json).toHaveLength(0);
       expect((await api(`/api/workflows/${theirs.json.id}`)).status).toBe(404);
-      expect((await api(`/api/workflows/${theirs.json.id}`, { method: 'DELETE' })).status).toBe(404);
+      expect((await api(`/api/workflows/${theirs.json.id}`, { method: 'DELETE' })).status).toBe(
+        404,
+      );
 
       // Still intact for its real owner.
       currentOwner = 'owner-a';

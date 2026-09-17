@@ -47,7 +47,10 @@ const NON_CONTENT_SELECTORS = [
 
 /** Collapse whitespace the way a reader perceives it. */
 function normalizeWhitespace(value: string): string {
-  return value.replace(/[ \t\r\f\v]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+  return value
+    .replace(/[ \t\r\f\v]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim();
 }
 
 /** Collapse runs of blank lines to at most one. */
@@ -119,9 +122,7 @@ export function extractFromHtml(html: string, baseUrl?: string): ExtractedConten
       '',
   );
 
-  const headings: ExtractedHeading[] = Array.from(
-    doc.querySelectorAll('h1, h2, h3, h4, h5, h6'),
-  )
+  const headings: ExtractedHeading[] = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6'))
     .map((element) => ({
       level: Number(element.tagName.slice(1)),
       text: normalizeWhitespace(element.textContent ?? ''),
@@ -221,9 +222,10 @@ export function toMarkdown(input: MarkdownInput): string {
 
   if (input.includeLinks && Array.isArray(input.links) && input.links.length > 0) {
     sections.push(
-      ['## Links', ...input.links.map((link) => `- [${link.text || link.href}](${link.href})`)].join(
-        '\n',
-      ),
+      [
+        '## Links',
+        ...input.links.map((link) => `- [${link.text || link.href}](${link.href})`),
+      ].join('\n'),
     );
   }
 

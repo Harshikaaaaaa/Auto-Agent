@@ -90,10 +90,9 @@ describe('capability metadata', () => {
 
     it('declares a side effect and an auth requirement', () => {
       for (const { toolId, action } of actions) {
-        expect(
-          ['read', 'write', 'irreversible'],
-          `${toolId}.${action.name} sideEffect`,
-        ).toContain(action.sideEffect);
+        expect(['read', 'write', 'irreversible'], `${toolId}.${action.name} sideEffect`).toContain(
+          action.sideEffect,
+        );
         expect(typeof action.requiresAuth, `${toolId}.${action.name} requiresAuth`).toBe('boolean');
       }
     });
@@ -195,7 +194,9 @@ describe('capability metadata', () => {
             capabilities: ['chat.send'],
             sideEffect: 'irreversible',
             requiresAuth: false,
-            inputSchema: { message: { type: 'string', description: 'What to say.', required: true } },
+            inputSchema: {
+              message: { type: 'string', description: 'What to say.', required: true },
+            },
             outputSchema: { paged: { type: 'boolean', description: 'Whether it went out.' } },
             execute: async () => ({ paged: true }),
           },

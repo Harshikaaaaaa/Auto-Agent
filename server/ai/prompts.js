@@ -103,9 +103,7 @@ export function buildPlanPrompt({ prompt, catalog, hints = [], repairFeedback })
   const hintBlock =
     hints.length > 0
       ? `\n## KEYWORD HINTS (weak signal, NOT a decision)\n` +
-        hints
-          .map((h) => `- ${h.toolId}.${h.actionName} (lexical score ${h.score})`)
-          .join('\n') +
+        hints.map((h) => `- ${h.toolId}.${h.actionName} (lexical score ${h.score})`).join('\n') +
         `\nThese come from naive keyword matching. Ignore any hint that does not ` +
         `genuinely fit the request.\n`
       : '';
@@ -192,10 +190,7 @@ export function buildPatchPrompt({ message, graph, catalog, repairFeedback }) {
     )
     .join('\n');
   const edgeList = (graph?.edges ?? [])
-    .map(
-      (e) =>
-        `  - "${e.source}" -> "${e.target}"` + (e.condition ? ` when: ${e.condition}` : ''),
-    )
+    .map((e) => `  - "${e.source}" -> "${e.target}"` + (e.condition ? ` when: ${e.condition}` : ''))
     .join('\n');
 
   return `You are editing an existing workflow graph. Translate the user's instruction into a minimal list of operations.

@@ -65,6 +65,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Format check
+        run: npm run format:check
+
       # Fail loudly if the database the tests need is not actually up, otherwise
       # the persistence suites would silently skip and CI would look green.
       - name: Wait for MySQL
@@ -88,8 +91,3 @@ jobs:
       # because they previously were, and were recoverable from dist/.
       - name: Assert no secrets in built bundle
         run: node scripts/assert-no-secrets-in-bundle.mjs
-
-      # NOTE: repo-wide `format:check` is deliberately not gated yet. The legacy
-      # tree predates Prettier and is rewritten across Tasks 8-15; gating now
-      # would bury the security fixes under a whole-repo reformat diff. The
-      # `npm run format` script is available and the gate is added in Task 15.

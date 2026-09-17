@@ -75,8 +75,8 @@ export function AuthGate({ children }: AuthGateProps) {
       <Centered>
         <h1 style={heading}>Cannot reach the server</h1>
         <p style={body}>
-          The AutoAgent API is not responding. Start it with <code style={code}>npm run server</code>{' '}
-          and try again.
+          The AutoAgent API is not responding. Start it with{' '}
+          <code style={code}>npm run server</code> and try again.
         </p>
         <button type="button" style={primaryButton} onClick={() => void check()}>
           Retry
@@ -131,7 +131,8 @@ export function AuthGate({ children }: AuthGateProps) {
     <>
       {session.authDisabled && (
         <div role="status" style={devBanner}>
-          Authentication is disabled on this server (development mode). Do not expose this deployment.
+          Authentication is disabled on this server (development mode). Do not expose this
+          deployment.
         </div>
       )}
       {children}

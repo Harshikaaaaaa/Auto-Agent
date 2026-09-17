@@ -12,8 +12,11 @@ export const AI_PATHS = ['/api/ai'];
 
 /**
  * Saved workflows.
- * `/workflows` is the legacy prefix still used by the client; `/api/workflows`
- * is where Task 5 moves it. Both are guarded during the transition.
+ *
+ * `/api/workflows` is the real prefix. The legacy `/workflows` prefix is kept in
+ * this list even though its routes were removed with the JSON store: if it is
+ * ever reintroduced it will be guarded by default rather than anonymous, which is
+ * exactly the mistake this file exists to prevent.
  */
 export const WORKFLOW_PATHS = ['/workflows', '/api/workflows'];
 

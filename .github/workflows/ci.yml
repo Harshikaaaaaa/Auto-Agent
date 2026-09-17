@@ -20,6 +20,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # The persistence tests are integration tests against a real MySQL, because
+    # what they verify (transactions, unique constraints, row locking, optimistic
+    # locking) is the database's behaviour. Without this service they skip, so CI
+    # provides one to make sure they actually run.
+    services:
+      mysql:
+        image: mysql:9.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: autoagent_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_USER: root
+      DB_PASSWORD: ''
+      TEST_DB_NAME: autoagent_test
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,6 +64,19 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # Fail loudly if the database the tests need is not actually up, otherwise
+      # the persistence suites would silently skip and CI would look green.
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -u root --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
 
       - name: Test
         run: npm run test

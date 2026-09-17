@@ -6,7 +6,10 @@ import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { setupWorkflowRoutes } from './workflowHandler.js';
+import { setupWorkflowRoutes } from './workflows/routes.js';
+import { closePool, ensureDatabaseExists, isDatabaseReachable, describeConnection } from './db/pool.js';
+import { importLegacyWorkflows, runMigrations } from './db/migrations.js';
+import { OPERATOR_SUBJECT } from './auth/session.js';
 import { env, publicAiConfig } from './config/env.js';
 import { setupAiRoutes } from './ai/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
@@ -47,9 +50,18 @@ app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
 });
 
-/** Readiness: safe to receive traffic. Reports no configuration details. */
-app.get('/readyz', (_req, res) => {
-    res.json({ status: 'ready' });
+/**
+ * Readiness: safe to receive traffic.
+ *
+ * Checks the database, because without it every workflow route fails. Reports no
+ * connection details — an unauthenticated probe should not disclose topology.
+ */
+app.get('/readyz', async (_req, res) => {
+    const databaseReachable = await isDatabaseReachable();
+    res.status(databaseReachable ? 200 : 503).json({
+        status: databaseReachable ? 'ready' : 'degraded',
+        database: databaseReachable ? 'up' : 'down',
+    });
 });
 
 setupAuthRoutes(app, { loginLimiter: limiters.auth });
@@ -159,7 +171,51 @@ function safeHost(url) {
     }
 }
 
+/**
+ * Prepare the database before serving traffic.
+ *
+ * Creating the schema on boot is convenient for local development and for a
+ * single-container deployment. Set DB_AUTO_MIGRATE=false to run migrations as a
+ * separate deployment step instead.
+ */
+async function prepareDatabase() {
+    if (!env.DB_AUTO_MIGRATE) {
+        logger.info('DB_AUTO_MIGRATE is off; skipping schema setup');
+        return;
+    }
+
+    await ensureDatabaseExists();
+    const applied = await runMigrations();
+    logger.info(
+        { ...describeConnection(), migrationsApplied: applied },
+        'database ready',
+    );
+
+    // One-time move off the legacy JSON file. Uses INSERT IGNORE, so this is a
+    // no-op once the rows exist, and the source file is left in place.
+    const imported = await importLegacyWorkflows({ ownerId: OPERATOR_SUBJECT });
+    if (imported.imported > 0) {
+        logger.info(
+            { imported: imported.imported, skipped: imported.skipped },
+            'imported workflows from the legacy JSON file',
+        );
+    }
+}
+
 async function startServer() {
+    try {
+        await prepareDatabase();
+    } catch (err) {
+        // Without a database every workflow route fails, so refusing to start is
+        // clearer than serving an app that cannot save anything.
+        logger.error(
+            { err, ...describeConnection() },
+            'could not prepare the database; refusing to start',
+        );
+        process.exitCode = 1;
+        return;
+    }
+
     // Shared state
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
@@ -421,10 +477,38 @@ async function startServer() {
     // route and from CORS rejections.
     app.use(errorHandler);
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         logger.info({ port: PORT, authEnabled: env.AUTH_ENABLED }, 'AutoAgent server listening');
         void reportAiConfiguration();
     });
+
+    // Graceful shutdown: stop accepting connections, then release the database
+    // pool so in-flight transactions are not cut mid-write.
+    let shuttingDown = false;
+    const shutdown = async (signal) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        logger.info({ signal }, 'shutting down');
+
+        const forceExit = setTimeout(() => {
+            logger.warn('shutdown timed out; exiting');
+            process.exit(1);
+        }, 10_000);
+        forceExit.unref();
+
+        server.close(async () => {
+            try {
+                await closePool();
+            } catch (err) {
+                logger.error({ err }, 'failed to close the database pool');
+            }
+            clearTimeout(forceExit);
+            process.exit(0);
+        });
+    };
+
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
+    process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
 startServer();

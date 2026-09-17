@@ -48,7 +48,7 @@ describe('protected paths', () => {
    * one is either explicitly public or covered by a protected prefix.
    */
   it('guards every route registered by the server', () => {
-    const sources = ['api.js', 'workflowHandler.js', 'ai/routes.js', 'auth/session.js'];
+    const sources = ['api.js', 'workflows/routes.js', 'ai/routes.js', 'auth/session.js'];
     const registered = new Set();
 
     for (const file of sources) {
@@ -63,7 +63,7 @@ describe('protected paths', () => {
     }
 
     // Sanity check that the scan found the real routes rather than nothing.
-    expect(registered.has('/workflows')).toBe(true);
+    expect(registered.has('/api/workflows')).toBe(true);
     expect(registered.has('/api/ai/plan')).toBe(true);
     expect(registered.size).toBeGreaterThan(8);
 

@@ -111,6 +111,19 @@ const schema = z
     // ---- Logging ----
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
+    // ---- Database (MySQL) ----
+    DB_HOST: z.string().min(1).default('127.0.0.1'),
+    DB_PORT: intWithDefault(3306, { min: 1, max: 65535 }),
+    DB_USER: z.string().min(1).default('root'),
+    /** Empty is tolerated for a local dev server, but never in production. */
+    DB_PASSWORD: z.string().optional().default(''),
+    DB_NAME: z.string().min(1).default('autoagent'),
+    DB_CONNECTION_LIMIT: intWithDefault(10, { min: 1, max: 100 }),
+    /** Require TLS to the database. Should be on for any non-local database. */
+    DB_SSL: booleanish(false),
+    /** Create the schema on boot. Convenient locally; use migrations in prod. */
+    DB_AUTO_MIGRATE: booleanish(true),
+
     // ---- AI provider selection ----
     AI_PROVIDER: z.enum(['openrouter', 'gemini', 'ollama']).default('openrouter'),
     AI_REQUEST_TIMEOUT_MS: intWithDefault(60_000, { min: 1_000, max: 300_000 }),
@@ -197,6 +210,31 @@ const schema = z
           message: 'SESSION_SECRET must be at least 32 characters of high-entropy material.',
         });
       }
+    }
+
+    // A production database must be password protected. An empty password is a
+    // convenience of local Homebrew MySQL, not something to ship.
+    if (cfg.NODE_ENV === 'production' && !cfg.DB_PASSWORD) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DB_PASSWORD'],
+        message:
+          'DB_PASSWORD is required when NODE_ENV=production. ' +
+          'An unauthenticated database exposes every saved workflow.',
+      });
+    }
+
+    // Connecting to a remote database in the clear would put workflow contents
+    // on the wire unencrypted.
+    const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+    if (cfg.NODE_ENV === 'production' && !cfg.DB_SSL && !localHosts.has(cfg.DB_HOST)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DB_SSL'],
+        message:
+          `DB_SSL must be enabled in production when DB_HOST ("${cfg.DB_HOST}") is not local, ` +
+          'otherwise database traffic is unencrypted.',
+      });
     }
   })
   .transform((cfg) => ({

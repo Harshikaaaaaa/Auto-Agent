@@ -31,7 +31,18 @@ describe('capability metadata', () => {
     const ids = getAllTools()
       .map((t) => t.id)
       .sort();
-    expect(ids).toEqual(['gmail', 'google_drive', 'google_sheets', 'slack', 'whatsapp']);
+    expect(ids).toEqual([
+      // Built-in capabilities, no credential needed.
+      'content',
+      'files',
+      // External services.
+      'gmail',
+      'google_drive',
+      'google_sheets',
+      'slack',
+      'web',
+      'whatsapp',
+    ]);
   });
 
   describe('every registered action', () => {
@@ -243,18 +254,27 @@ describe('capability metadata', () => {
       expect(slackIndex).toBeLessThan(whatsappIndex);
     });
 
+    it('resolves the capabilities added in Task 7', () => {
+      // These were deliberately unprovided until the built-in nodes existed.
+      expect(findActionsByCapability('web.fetch').map((m) => m.toolId)).toEqual(['web']);
+      expect(findActionsByCapability('content.extract').map((m) => m.toolId)).toEqual(['content']);
+      expect(findActionsByCapability('file.deliver').map((m) => m.toolId)).toEqual(['files']);
+    });
+
     it('returns nothing for a capability no tool provides', () => {
-      // Task 7 implements these; until then they must read as absent so the
-      // planner marks such steps unsupported.
-      expect(findActionsByCapability('web.fetch')).toEqual([]);
-      expect(findActionsByCapability('file.deliver')).toEqual([]);
+      // Not in the taxonomy at all, so nothing can claim it.
+      expect(findActionsByCapability('not.a.capability' as never)).toEqual([]);
     });
 
     it('reports the capabilities that are actually available', () => {
       const available = getAvailableCapabilities();
       expect(available).toContain('email.send');
       expect(available).toContain('spreadsheet.write');
-      expect(available).not.toContain('web.fetch');
+      // The scrape-to-download chain is now fully covered.
+      expect(available).toContain('web.fetch');
+      expect(available).toContain('content.extract');
+      expect(available).toContain('content.format');
+      expect(available).toContain('file.deliver');
     });
   });
 

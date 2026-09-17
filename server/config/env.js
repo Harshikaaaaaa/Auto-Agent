@@ -107,6 +107,8 @@ const schema = z
     RATE_LIMIT_AUTH_MAX: intWithDefault(10, { min: 1, max: 1_000 }),
     /** Outbound message sends are throttled to limit spam blast radius. */
     RATE_LIMIT_SEND_MAX: intWithDefault(20, { min: 1, max: 10_000 }),
+    /** Outbound fetches are throttled so this cannot be used as a scraper. */
+    RATE_LIMIT_FETCH_MAX: intWithDefault(60, { min: 1, max: 10_000 }),
 
     // ---- Logging ----
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -141,6 +143,14 @@ const schema = z
 
     OLLAMA_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
     OLLAMA_MODEL: z.string().min(1).default('deepseek-r1:8b'),
+
+    // ---- Outbound fetch (the web.fetch capability) ----
+    /** Longest a single hop may take. */
+    FETCH_TIMEOUT_MS: intWithDefault(15_000, { min: 1_000, max: 120_000 }),
+    /** Response size ceiling. Each request may ask for less, never more. */
+    FETCH_MAX_BYTES: intWithDefault(2_000_000, { min: 1_024, max: 20_000_000 }),
+    /** Redirect hops allowed. Every hop is re-validated against the SSRF policy. */
+    FETCH_MAX_REDIRECTS: intWithDefault(5, { min: 0, max: 10 }),
 
     // ---- Feature flags ----
     /** WhatsApp bridge is opt-in; see Task 17. */

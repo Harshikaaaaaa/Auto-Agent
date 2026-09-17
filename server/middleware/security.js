@@ -144,6 +144,8 @@ export function buildLimiters() {
     auth: buildLimiter({ limit: env.RATE_LIMIT_AUTH_MAX, name: 'auth' }),
     /** Budget for outbound sends, to cap spam blast radius. */
     send: buildLimiter({ limit: env.RATE_LIMIT_SEND_MAX, name: 'send' }),
+    /** Budget for outbound fetches, to cap use as a scanner or scraper. */
+    fetch: buildLimiter({ limit: env.RATE_LIMIT_FETCH_MAX, name: 'fetch' }),
   };
 }
 

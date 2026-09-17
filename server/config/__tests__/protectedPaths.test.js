@@ -37,6 +37,11 @@ describe('protected paths', () => {
     expect(AI_PATHS).toContain('/api/ai');
   });
 
+  it('covers the outbound fetch route', () => {
+    // Anonymous access here would be a network scanner.
+    expect(ALL_PROTECTED_PATHS).toContain('/api/fetch');
+  });
+
   it('does not mark a public path as protected', () => {
     for (const publicPath of PUBLIC_PATHS) {
       expect(ALL_PROTECTED_PATHS).not.toContain(publicPath);
@@ -48,7 +53,13 @@ describe('protected paths', () => {
    * one is either explicitly public or covered by a protected prefix.
    */
   it('guards every route registered by the server', () => {
-    const sources = ['api.js', 'workflows/routes.js', 'ai/routes.js', 'auth/session.js'];
+    const sources = [
+      'api.js',
+      'workflows/routes.js',
+      'ai/routes.js',
+      'auth/session.js',
+      'fetch/routes.js',
+    ];
     const registered = new Set();
 
     for (const file of sources) {

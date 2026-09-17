@@ -24,6 +24,12 @@ export const WORKFLOW_PATHS = ['/workflows', '/api/workflows'];
 export const WHATSAPP_PATHS = ['/status', '/qr', '/send', '/messages', '/disconnect'];
 
 /**
+ * Outbound fetch. Anonymous or unlimited access here would turn the server into
+ * a network scanner and an open proxy, so it is gated and separately budgeted.
+ */
+export const FETCH_PATHS = ['/api/fetch'];
+
+/**
  * Paths that must stay reachable without a session.
  * Health probes need to work before anyone signs in, and the auth endpoints are
  * how a session is obtained in the first place.
@@ -37,4 +43,9 @@ export const PUBLIC_PATHS = [
 ];
 
 /** Every session-gated prefix, for assertions and documentation. */
-export const ALL_PROTECTED_PATHS = [...AI_PATHS, ...WORKFLOW_PATHS, ...WHATSAPP_PATHS];
+export const ALL_PROTECTED_PATHS = [
+  ...AI_PATHS,
+  ...WORKFLOW_PATHS,
+  ...WHATSAPP_PATHS,
+  ...FETCH_PATHS,
+];

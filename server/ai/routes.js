@@ -90,6 +90,11 @@ const planRequestSchema = z.object({
     .default([]),
   provider: providerHintSchema,
   model: modelSchema,
+  /**
+   * Why the previous attempt was rejected. Sent on a retry so the model is told
+   * what to fix rather than being asked the same question twice.
+   */
+  repairFeedback: z.string().max(2000).optional(),
 });
 
 const patchRequestSchema = z.object({
@@ -226,9 +231,9 @@ export function setupAiRoutes(app) {
       const parsed = planRequestSchema.safeParse(req.body);
       if (!parsed.success) return validationFailure(res, parsed.error);
 
-      const { prompt, catalog, hints, provider, model } = parsed.data;
+      const { prompt, catalog, hints, provider, model, repairFeedback } = parsed.data;
       const result = await callProviderForJson({
-        prompt: buildPlanPrompt({ prompt, catalog, hints }),
+        prompt: buildPlanPrompt({ prompt, catalog, hints, repairFeedback }),
         provider,
         model,
       });

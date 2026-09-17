@@ -114,6 +114,12 @@ export async function requestPlan(input: {
   hints?: PlanHint[];
   provider?: AiProviderHint;
   model?: string;
+  /**
+   * Why the previous plan was rejected. Sent on a retry so the model is told
+   * what to fix; re-issuing the identical prompt tends to reproduce the same
+   * invalid answer.
+   */
+  repairFeedback?: string;
 }): Promise<{ plan: unknown; meta: AiCallMeta }> {
   return postJson('/api/ai/plan', input);
 }

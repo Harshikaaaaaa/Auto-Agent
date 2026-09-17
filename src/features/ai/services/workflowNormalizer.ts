@@ -59,6 +59,15 @@ export function normalizeWorkflowShape(raw: unknown): Workflow {
  * Only ever binds to a tool that is actually registered — it cannot invent one.
  * A node left unbound falls through to the generic AI path at run time, which is
  * the honest outcome when no tool matches.
+ *
+ * DEAD PATH — do not wire this back up. This is keyword substitution: it binds a
+ * tool because the node's label happens to contain a word. That is the mechanism
+ * behind the reported defect, where a request for a downloadable Markdown file
+ * became "Save results to Google Sheets". The only supported route is now the
+ * planner in `workflowPlanGenerator.ts`, which validates every binding against
+ * the catalog and marks a gap unsupported instead of guessing. Reachable only
+ * from the legacy `generateWorkflow` helpers, which nothing in the UI calls;
+ * Task 11 removes them along with the second execution engine.
  */
 export function bindNodesToRegisteredTools(workflow: Workflow): Workflow {
   const registeredTools = getAllTools();

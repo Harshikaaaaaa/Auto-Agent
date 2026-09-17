@@ -9,6 +9,15 @@ import '@features/tools/connectors'; // ensure all tools are registered
 
 const EXECUTION_CHECKPOINT_KEY = 'autoagent_runtime_checkpoint';
 
+/**
+ * Marks a failure that retrying cannot fix.
+ *
+ * A step the planner marked `unsupported` has no tool behind it. Running it
+ * three times changes nothing, and falling through to the generic AI branch
+ * would make the run report success for work that never happened.
+ */
+const UNSUPPORTED_STEP_PREFIX = 'Unsupported step:';
+
 type RuntimeExecutionCheckpoint = {
     runId: string;
     status: 'running' | 'paused' | 'failed' | 'completed';
@@ -321,6 +330,18 @@ export const useWorkflowExecution = (
                     }
                 }
 
+                // A step the planner could not bind to any registered action.
+                // Fail loudly here: the branches below would otherwise send it to
+                // the LLM, which would return plausible text and the run would be
+                // logged as completed.
+                if (node.data.unsupported) {
+                    throw new Error(
+                        `${UNSUPPORTED_STEP_PREFIX} ${node.data.label || nodeId} — ` +
+                        `${node.data.unsupportedReason || 'no connected tool provides this capability'}. ` +
+                        'Connect a tool that can do it, or remove the step.'
+                    );
+                }
+
                 // Check if this node is bound to a tool action
                 const { toolId, toolAction } = node.data;
                 if (toolId && toolAction) {
@@ -455,7 +476,13 @@ export const useWorkflowExecution = (
                 const retryCount = executionControlRef.current.retryCounts[nodeId] || 0;
                 const maxRetries = 2;
 
-                if (retryCount < maxRetries && !(err instanceof Error && (err.message.includes('not authenticated') || err.message.includes('connect it first')))) {
+                const isPermanent = err instanceof Error && (
+                    err.message.includes('not authenticated') ||
+                    err.message.includes('connect it first') ||
+                    err.message.startsWith(UNSUPPORTED_STEP_PREFIX)
+                );
+
+                if (retryCount < maxRetries && !isPermanent) {
                     executionControlRef.current.retryCounts[nodeId] = retryCount + 1;
                     visited.delete(nodeId);
                     queue.unshift(nodeId);

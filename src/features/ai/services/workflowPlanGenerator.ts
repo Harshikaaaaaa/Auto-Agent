@@ -1,522 +1,484 @@
-import { Workflow, WorkflowNode, WorkflowEdge } from '@features/workflow/types';
-import { findReusableToolTemplate, getAllTools, rankToolMatches, describeCatalog, CapabilityMatch } from '@features/tools/toolRegistry';
-import { requestPlan, requestWorkflow } from '@features/ai/services/aiClient';
-import { normalizeGeneratedWorkflow } from '@features/ai/services/workflowNormalizer';
+import { z } from 'zod';
 import { NodeType } from '@/shared/types';
+import { requestPlan } from '@features/ai/services/aiClient';
+import {
+    actionRequiresApproval,
+    describeCatalog,
+    getExternalInputKeys,
+    getTool,
+    rankToolMatches,
+    type CapabilityMatch,
+    type CatalogAction,
+    type CatalogTool
+} from '@features/tools/toolRegistry';
+import type { NodeData, Workflow, WorkflowEdge, WorkflowNode } from '@features/workflow/types';
 
+/**
+ * Workflow planning.
+ *
+ * ONE route: the request, the tool catalog and weak keyword hints go to the
+ * server, the model returns a plan, and the plan is validated against the
+ * catalog before anything is built from it.
+ *
+ * What this deliberately does NOT do:
+ *
+ *  - It does not pattern-match the prompt to decide what the workflow is. The
+ *    previous implementation did, and a prompt asking for a Markdown file it
+ *    could download came back as "Save results to Google Sheets" because
+ *    /save|store|log/ matched. Keyword rankings are still computed, but they
+ *    are passed as hints the model may ignore, never as a decision.
+ *  - It does not substitute a "close enough" tool. A step either binds a
+ *    toolId/toolAction that exists in the catalog, or it is marked unsupported
+ *    with a reason the user can read. A wrong tool is worse than an honest gap.
+ *  - It does not pad a plan to hit a step count, and it does not invent
+ *    required tools. Every derived field comes from the steps themselves.
+ *
+ * When the model breaks those rules the plan is rejected and retried ONCE with
+ * the specific failures as feedback — re-asking the same question would most
+ * likely reproduce the same answer. A second failure throws.
+ */
+
+// ------------------------------------------------------------------- types
+
+export const PLAN_STEP_TYPES = ['trigger', 'process', 'decision', 'tool', 'output'] as const;
+export type PlanStepType = (typeof PLAN_STEP_TYPES)[number];
+
+export const PLAN_ESTIMATES = ['Fast', 'Medium', 'Slow'] as const;
+export type PlanEstimate = (typeof PLAN_ESTIMATES)[number];
+
+/**
+ * One validated step.
+ *
+ * The invariant that matters: `toolId`/`toolAction` are either BOTH a real
+ * catalog action or BOTH null, and a step with `unsupported: true` always has
+ * both null plus a reason.
+ */
+export interface PlanStep {
+    id: string;
+    order: number;
+    type: PlanStepType;
+    label: string;
+    description: string;
+    /** A tool id that exists in the catalog, or null. */
+    toolId: string | null;
+    /** An action that exists on `toolId`, or null. */
+    toolAction: string | null;
+    /** No registered tool provides what this step needs. */
+    unsupported: boolean;
+    /** Why the step is unsupported. Non-null whenever `unsupported` is true. */
+    unsupportedReason: string | null;
+    /** State keys the step reads. */
+    inputs: string[];
+    /** State keys the step writes. */
+    outputs: string[];
+    /** Values the user must supply before the workflow can run. */
+    externalInputs: string[];
+}
 
 export interface WorkflowPlan {
     title: string;
     description: string;
+    estimatedTime: PlanEstimate;
     steps: PlanStep[];
-    estimatedTime: string;
+    /** DERIVED from the steps that actually bind a tool. Never guessed. */
     requiredTools: string[];
-    capabilityMatches?: CapabilityMatch[];
+    /** DERIVED: the reasons steps could not be satisfied, for the preview. */
+    unsupportedCapabilities: string[];
+    /** DERIVED: the bindings the planner chose, for the preview. */
+    capabilityMatches: CapabilityMatch[];
 }
 
-export interface PlanStep {
-    id: string;
-    order: number;
-    type: 'trigger' | 'process' | 'decision' | 'tool' | 'output';
-    label: string;
-    description: string;
-    toolName?: string;
-    inputs?: string[];
-    outputs?: string[];
+/** Raised when the model cannot produce a plan that satisfies the catalog. */
+export class PlanValidationError extends Error {
+    readonly issues: string[];
+
+    constructor(issues: string[]) {
+        super(
+            'The plan the model returned did not match the available tools, and the ' +
+            'retry failed too:\n- ' + issues.join('\n- ')
+        );
+        this.name = 'PlanValidationError';
+        this.issues = issues;
+    }
 }
 
-const buildIntentPlanFromPrompt = (prompt: string, matches: Array<{ toolId: string; toolName: string; actionName: string; score: number; rationale: string[] }>): WorkflowPlan => {
-    const normalized = prompt.toLowerCase();
-    const isScraping = /(scrap|crawl|fetch|collect|extract|read from .*page|product page|web page)/i.test(prompt);
-    const isSentiment = /(sentiment|classif|analyz|categorize|group.*feedback|review.*score|tone)/i.test(prompt);
-    const isSaving = /(save|store|log|sheet|google sheets|spreadsheet|write.*sheet|append.*row)/i.test(prompt);
-    const isEmailing = /(email|gmail)/i.test(prompt);
-    const isSlacking = /(slack|notify|message)/i.test(prompt);
+// ------------------------------------------------------------------ schema
 
-    const requiredTools = Array.from(new Set(matches.slice(0, 4).map(match => match.toolId)));
+/**
+ * Shape check on untrusted model output.
+ *
+ * Fields are `nullish` rather than required-with-default because models emit
+ * `null` for "not applicable" at least as often as they omit the key, and both
+ * should be treated the same. Semantic checks happen afterwards, where a failure
+ * can be explained back to the model in words.
+ */
+const rawStepSchema = z.object({
+    id: z.string().max(200).nullish(),
+    order: z.number().finite().nullish(),
+    type: z.string().max(40).nullish(),
+    label: z.string().min(1).max(300),
+    description: z.string().max(4_000).nullish(),
+    toolId: z.string().max(120).nullish(),
+    toolAction: z.string().max(120).nullish(),
+    unsupported: z.boolean().nullish(),
+    unsupportedReason: z.string().max(1_000).nullish(),
+    inputs: z.array(z.string().max(200)).max(60).nullish(),
+    outputs: z.array(z.string().max(200)).max(60).nullish(),
+    externalInputs: z.array(z.string().max(200)).max(60).nullish()
+});
 
-    const steps: PlanStep[] = [
-        {
-            id: 'start',
-            order: 1,
-            type: 'trigger',
-            label: 'Start',
-            description: 'Initialize the workflow and capture the input request.'
+const rawPlanSchema = z.object({
+    title: z.string().max(300).nullish(),
+    description: z.string().max(4_000).nullish(),
+    estimatedTime: z.string().max(40).nullish(),
+    steps: z.array(rawStepSchema).min(1).max(24)
+});
+
+type RawPlan = z.infer<typeof rawPlanSchema>;
+
+// ----------------------------------------------------------------- helpers
+
+/** Trimmed string, or undefined for null/empty. Models send both. */
+function text(value: string | null | undefined): string | undefined {
+    const trimmed = (value ?? '').trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function unique(values: string[]): string[] {
+    return Array.from(new Set(values.filter(value => value.trim().length > 0)));
+}
+
+function slug(value: string, fallback: string): string {
+    const cleaned = value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 60);
+    return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function normaliseStepType(value: string | null | undefined): PlanStepType | undefined {
+    const candidate = (value ?? '').trim().toLowerCase();
+    return PLAN_STEP_TYPES.find(type => type === candidate);
+}
+
+function normaliseEstimate(value: string | null | undefined): PlanEstimate {
+    const candidate = (value ?? '').trim().toLowerCase();
+    return PLAN_ESTIMATES.find(estimate => estimate.toLowerCase() === candidate) ?? 'Medium';
+}
+
+/**
+ * Some providers wrap the answer as `{ "plan": { ... } }` despite being told not
+ * to. Unwrapping one level is cheaper than burning a retry on it.
+ */
+function unwrapPlan(raw: unknown): unknown {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const record = raw as Record<string, unknown>;
+        if (!Array.isArray(record.steps) && record.plan && typeof record.plan === 'object') {
+            return record.plan;
         }
-    ];
+    }
+    return raw;
+}
 
-    if (isScraping || /read|capture|collect|fetch/.test(normalized)) {
-        steps.push({
-            id: 'capture_data',
-            order: 2,
-            type: 'process',
-            label: 'Capture source data',
-            description: 'Collect the relevant records or page content needed for the workflow.',
-            inputs: ['source_url', 'input'],
-            outputs: ['raw_data']
-        });
+interface CatalogIndex {
+    toolIds: string[];
+    toolNames: Map<string, string>;
+    actionNamesByTool: Map<string, string[]>;
+    actions: Map<string, CatalogAction>;
+}
+
+function indexCatalog(catalog: CatalogTool[]): CatalogIndex {
+    const toolNames = new Map<string, string>();
+    const actionNamesByTool = new Map<string, string[]>();
+    const actions = new Map<string, CatalogAction>();
+
+    for (const tool of catalog) {
+        toolNames.set(tool.id, tool.name);
+        actionNamesByTool.set(tool.id, tool.actions.map(action => action.name));
+        for (const action of tool.actions) {
+            actions.set(`${tool.id}.${action.name}`, action);
+        }
     }
 
-    if (isSentiment || /group|summarize|analyz|review|feedback/.test(normalized)) {
-        steps.push({
-            id: 'analyze_data',
-            order: steps.length + 1,
-            type: 'process',
-            label: 'Analyze and categorize results',
-            description: 'Group the inputs by meaning, sentiment, or category before outputting them.',
-            inputs: ['raw_data', 'context'],
-            outputs: ['categorized_results']
-        });
-    }
+    return { toolIds: catalog.map(tool => tool.id), toolNames, actionNamesByTool, actions };
+}
 
-    if (isSaving || isEmailing || isSlacking) {
-        steps.push({
-            id: 'action_result',
-            order: steps.length + 1,
-            type: 'tool',
-            label: isSaving ? 'Save results to spreadsheet' : isEmailing ? 'Send result via email' : 'Send result to Slack',
-            description: isSaving
-                ? 'Write the structured output to the destination sheet or spreadsheet.'
-                : isEmailing
-                    ? 'Send the processed result to the final recipient or team.'
-                    : 'Notify the relevant audience with the final result.',
-            toolName: isSaving ? 'Google Sheets' : isEmailing ? 'Gmail' : 'Slack',
-            inputs: ['categorized_results', 'input'],
-            outputs: ['saved_result']
-        });
-    }
+// -------------------------------------------------------------- validation
 
-    if (!steps.some(step => step.type === 'output')) {
-        steps.push({
-            id: 'result',
-            order: steps.length + 1,
-            type: 'output',
-            label: 'Return result',
-            description: 'Return the final workflow result to the user or downstream node.'
-        });
-    }
+/**
+ * Turn raw model output into a plan, collecting every rule it broke.
+ *
+ * Two different kinds of correction happen here, and the distinction is the
+ * whole point:
+ *
+ *  - NORMALISED silently: things that carry no claim about capability — step
+ *    ids, `order` numbering, a missing or misspelled `type`. Rewriting these
+ *    cannot make the plan say it can do something it cannot.
+ *  - REPORTED as an issue: anything about tool binding. A toolId that is not in
+ *    the catalog, an action the tool does not have, a step that is both bound
+ *    and unsupported, an unsupported step with no reason. These are sent back to
+ *    the model verbatim; they are never patched over.
+ */
+function normalisePlan(
+    raw: RawPlan,
+    catalog: CatalogTool[],
+    promptFallbackTitle: string
+): { plan: WorkflowPlan; issues: string[] } {
+    const index = indexCatalog(catalog);
+    const issues: string[] = [];
+    const usedIds = new Set<string>();
 
-    const title = isScraping && isSentiment && isSaving
-        ? 'Review analysis workflow'
-        : requiredTools.length > 1
-            ? `Multi-step ${requiredTools.length}-tool workflow`
-            : `${matches[0]?.toolName || 'Workflow'} workflow`;
+    const steps: PlanStep[] = raw.steps.map((rawStep, position) => {
+        const where = `Step ${position + 1} ("${rawStep.label}")`;
+        const toolId = text(rawStep.toolId);
+        const toolAction = text(rawStep.toolAction);
+        const unsupported = rawStep.unsupported === true;
+        const unsupportedReason = text(rawStep.unsupportedReason);
 
-    return {
-        title,
-        description: prompt,
-        steps,
-        estimatedTime: requiredTools.length > 2 ? 'Medium' : 'Fast',
-        requiredTools,
-        capabilityMatches: matches.slice(0, 5) as CapabilityMatch[]
-    };
-};
+        // ---- binding: reported, never patched ----
+        let bound = false;
+        if (toolId || toolAction) {
+            if (!toolId) {
+                issues.push(`${where} sets toolAction "${toolAction}" but no toolId.`);
+            } else if (!toolAction) {
+                issues.push(`${where} sets toolId "${toolId}" but no toolAction.`);
+            } else if (!index.actionNamesByTool.has(toolId)) {
+                issues.push(
+                    `${where} binds toolId "${toolId}", which is not in the catalog. ` +
+                    `The only valid tool ids are: ${index.toolIds.join(', ')}.`
+                );
+            } else if (!index.actions.has(`${toolId}.${toolAction}`)) {
+                issues.push(
+                    `${where} binds action "${toolAction}", which tool "${toolId}" does not have. ` +
+                    `Valid actions for "${toolId}": ${(index.actionNamesByTool.get(toolId) ?? []).join(', ')}.`
+                );
+            } else {
+                bound = true;
+            }
+        }
 
-export const buildPlanFromPromptMatches = (
-    prompt: string,
-    matches: Array<{ toolId: string; toolName: string; actionName: string; score: number; rationale: string[] }>
-): WorkflowPlan => {
-    const hasMultiIntent = /(scrap|collect|extract|sentiment|analyz|group|save|write|sheet|notify|email|slack)/i.test(prompt) &&
-        /(scrap|collect|extract|sentiment|analyz|group|save|write|sheet|notify|email|slack)/i.test(prompt);
+        if (unsupported && (toolId || toolAction)) {
+            issues.push(
+                `${where} is marked unsupported but also binds "${toolId ?? '?'}.${toolAction ?? '?'}". ` +
+                'A step is either bound to a catalog action or unsupported, never both.'
+            );
+        }
 
-    if (hasMultiIntent) {
-        return buildIntentPlanFromPrompt(prompt, matches);
-    }
+        if (unsupported && !unsupportedReason) {
+            issues.push(
+                `${where} is marked unsupported but gives no unsupportedReason. ` +
+                'The user has to be told what is missing.'
+            );
+        }
 
-    const uniqueMatches = Array.from(
-        new Map(matches.map(match => [`${match.toolId}:${match.actionName}`, match])).values()
+        // ---- type: derived when absent, reported when it contradicts ----
+        const declaredType = normaliseStepType(rawStep.type);
+        let type: PlanStepType =
+            declaredType ?? (bound ? 'tool' : position === 0 ? 'trigger' : 'process');
+
+        if (declaredType === 'tool' && !bound && !unsupported) {
+            issues.push(
+                `${where} has type "tool" but binds no toolId/toolAction and is not marked ` +
+                'unsupported. Bind a catalog action or set "unsupported": true with a reason.'
+            );
+        }
+
+        // A trigger starts the workflow; it never performs an external action.
+        if (bound && type === 'trigger') type = 'tool';
+        if (position === 0 && !bound && !unsupported) type = 'trigger';
+
+        // ---- ids: normalised, because a collision would merge two nodes ----
+        const base = slug(text(rawStep.id) ?? rawStep.label, `step_${position + 1}`);
+        let id = base;
+        for (let suffix = 2; usedIds.has(id); suffix += 1) {
+            id = `${base}_${suffix}`;
+        }
+        usedIds.add(id);
+
+        // External inputs come from the action's own schema as well as the
+        // model's list, so a required user-supplied field cannot be forgotten.
+        const declaredExternal = rawStep.externalInputs ?? [];
+        const schemaExternal = bound
+            ? (index.actions.get(`${toolId}.${toolAction}`)?.inputs ?? [])
+                .filter(field => field.external)
+                .map(field => field.name)
+            : [];
+
+        return {
+            id,
+            order: position + 1,
+            type,
+            label: rawStep.label.trim(),
+            description: text(rawStep.description) ?? '',
+            toolId: bound ? toolId! : null,
+            toolAction: bound ? toolAction! : null,
+            unsupported,
+            unsupportedReason: unsupported ? unsupportedReason ?? null : null,
+            inputs: unique(rawStep.inputs ?? []),
+            outputs: unique(rawStep.outputs ?? []),
+            externalInputs: unique([...declaredExternal, ...schemaExternal])
+        };
+    });
+
+    const requiredTools = unique(steps.map(step => step.toolId ?? ''));
+
+    const unsupportedCapabilities = unique(
+        steps.filter(step => step.unsupported).map(step => step.unsupportedReason ?? '')
     );
 
-    const orderedMatches = uniqueMatches.slice(0, 4);
-    const requiredTools = [...new Set(orderedMatches.map(match => match.toolId))];
-    const summaryLabel = requiredTools.length > 1 ? 'Combine results' : 'Return result';
-    const title = requiredTools.length > 1
-        ? `Multi-step ${requiredTools.length}-tool workflow`
-        : `${orderedMatches[0]?.toolName || 'Workflow'} workflow`;
-
-    const steps: PlanStep[] = [
-        {
-            id: 'start',
-            order: 1,
-            type: 'trigger',
-            label: 'Start',
-            description: 'Initialize the workflow and capture the input request.',
-            inputs: ['source_url', 'input', 'query', 'context'],
-            outputs: ['request', 'context']
-        }
-    ];
-
-    if (orderedMatches.length > 0) {
-        const toolStepCount = Math.min(orderedMatches.length, 2);
-        orderedMatches.slice(0, toolStepCount).forEach((match, index) => {
-            steps.push({
-                id: `tool_${index + 1}`,
-                order: index + 2,
-                type: 'tool',
-                label: `${match.toolName}: ${match.actionName.replace(/_/g, ' ')}`,
-                description: `Use the built-in ${match.toolName} action to ${match.actionName.replace(/_/g, ' ')}.`,
-                toolName: match.toolName,
-                inputs: [
-                    'input',
-                    'context',
-                    ...((match.actionName.includes('send') || match.actionName.includes('append')) ? ['target', 'message'] : [])
-                ],
-                outputs: ['result']
-            });
-        });
-    }
-
-    steps.push({
-        id: 'result',
-        order: steps.length + 1,
-        type: 'output',
-        label: summaryLabel,
-        description: 'Return the final workflow result to the user or downstream node.'
-    });
+    // What the planner actually chose — not what keyword matching suggested.
+    // Score is a flat "selected" marker; a lexical score here would imply the
+    // ranking made the decision, which is precisely what it no longer does.
+    const capabilityMatches: CapabilityMatch[] = steps
+        .filter(step => step.toolId && step.toolAction)
+        .map(step => ({
+            toolId: step.toolId!,
+            toolName: index.toolNames.get(step.toolId!) ?? step.toolId!,
+            actionName: step.toolAction!,
+            score: 100,
+            rationale: [`chosen by the planner for "${step.label}"`]
+        }));
 
     return {
-        title,
-        description: prompt,
-        steps,
-        estimatedTime: requiredTools.length > 2 ? 'Medium' : 'Fast',
-        requiredTools,
-        capabilityMatches: orderedMatches as CapabilityMatch[]
+        plan: {
+            title: text(raw.title) ?? promptFallbackTitle.slice(0, 80),
+            description: text(raw.description) ?? '',
+            estimatedTime: normaliseEstimate(raw.estimatedTime),
+            steps,
+            requiredTools,
+            unsupportedCapabilities,
+            capabilityMatches
+        },
+        issues
     };
+}
+
+// -------------------------------------------------------------- generation
+
+/** One request plus one informed repair attempt. */
+const MAX_PLAN_ATTEMPTS = 2;
+
+/**
+ * Plan a workflow for `prompt`.
+ *
+ * @throws PlanValidationError when the model cannot produce a catalog-valid plan.
+ * @throws AiRequestError when the server or provider call fails.
+ */
+export async function generateWorkflowPlan(prompt: string, model?: string): Promise<WorkflowPlan> {
+    const catalog = describeCatalog();
+
+    // Weak lexical signal, passed as a hint the model is told it may ignore.
+    // It is NOT consulted here and cannot influence the outcome on its own.
+    const hints = rankToolMatches(prompt)
+        .slice(0, 8)
+        .map(match => ({ toolId: match.toolId, actionName: match.actionName, score: match.score }));
+
+    let repairFeedback: string | undefined;
+    let issues: string[] = ['the model returned no usable plan'];
+
+    for (let attempt = 1; attempt <= MAX_PLAN_ATTEMPTS; attempt += 1) {
+        const { plan: raw } = await requestPlan({ prompt, catalog, hints, model, repairFeedback });
+
+        const parsed = rawPlanSchema.safeParse(unwrapPlan(raw));
+        if (parsed.success) {
+            const result = normalisePlan(parsed.data, catalog, prompt);
+            if (result.issues.length === 0) return result.plan;
+            issues = result.issues;
+        } else {
+            issues = parsed.error.issues.map(
+                issue => `${issue.path.join('.') || '(root)'}: ${issue.message}`
+            );
+        }
+
+        repairFeedback = issues.join('\n');
+    }
+
+    throw new PlanValidationError(issues);
+}
+
+// ------------------------------------------------------------ graph building
+
+const NODE_TYPE_FOR_STEP: Record<PlanStepType, NodeType> = {
+    trigger: NodeType.TRIGGER,
+    process: NodeType.AI_AGENT,
+    decision: NodeType.LOGIC,
+    tool: NodeType.TOOL,
+    output: NodeType.OUTPUT
 };
 
 /**
- * Generate a workflow execution plan from a user prompt
- * This is fast - just creates an outline before deep generation
+ * Build a node's data from an already-validated plan step.
+ *
+ * Deterministic on purpose: no LLM call, no keyword matching, no second opinion.
+ * The plan was validated against the catalog, so the only thing left to do is
+ * read the bound action's schema. The previous implementation asked the model
+ * again per node and ran the answer through another keyword ladder, which is how
+ * a plan could say one thing and the canvas show another.
  */
-const detectMultiStepWorkflowIntent = (prompt: string): string[] => {
-    const normalized = prompt.toLowerCase();
-    const intentSignals = [
-        { key: 'scrape', match: /(scrap|crawl|fetch|extract|read.*page|product page|web page)/i.test(normalized) },
-        { key: 'analyze', match: /(sentiment|analyz|summariz|categorize|group.*feedback|review.*score|score.*review|tone)/i.test(normalized) },
-        { key: 'save', match: /(save|store|log|write.*sheet|append.*row|google sheets|spreadsheet)/i.test(normalized) },
-        { key: 'notify', match: /(email|gmail|slack|notify|message)/i.test(normalized) },
-        { key: 'trigger', match: /(trigger|when|schedule|if|route)/i.test(normalized) }
-    ];
-
-    return intentSignals.filter(signal => signal.match).map(signal => signal.key);
-};
-
-export const generateWorkflowPlan = async (prompt: string, model: string): Promise<WorkflowPlan> => {
-    const rankedMatches = rankToolMatches(prompt);
-    const multiStepIntent = detectMultiStepWorkflowIntent(prompt);
-
-    if (multiStepIntent.length >= 2) {
-        return buildPlanFromPromptMatches(prompt, rankedMatches.length > 0 ? rankedMatches : [{
-            toolId: 'google_sheets',
-            toolName: 'Google Sheets',
-            actionName: 'append_row',
-            score: 50,
-            rationale: ['multi-step workflow intent']
-        }]);
-    }
-
-    if (rankedMatches.length > 0) {
-        return buildPlanFromPromptMatches(prompt, rankedMatches);
-    }
-
-    const reusableMatch = findReusableToolTemplate(prompt);
-    if (reusableMatch) {
-        return {
-            title: `${reusableMatch.toolName} workflow`,
-            description: `Workflow uses the built-in ${reusableMatch.toolName} action for ${reusableMatch.toolAction.replace(/_/g, ' ')}.`,
-            steps: [
-                {
-                    id: 'start',
-                    order: 1,
-                    type: 'trigger',
-                    label: 'Start',
-                    description: 'Initialize the workflow and capture the required input.',
-                    inputs: ['source_url', 'input', 'query', 'context'],
-                    outputs: ['request', 'context']
-                },
-                {
-                    id: reusableMatch.id,
-                    order: 2,
-                    type: 'tool',
-                    label: reusableMatch.label,
-                    description: reusableMatch.description,
-                    toolName: reusableMatch.toolName,
-                    inputs: reusableMatch.inputKeys,
-                    outputs: reusableMatch.outputKeys
-                },
-                { id: 'result', order: 3, type: 'output', label: 'Result', description: 'Return the result of the operation.' }
-            ],
-            estimatedTime: 'Fast',
-            requiredTools: [reusableMatch.toolId]
-        };
-    }
-
-    // Ask the server to plan. The prompt template and the provider credential
-    // both live server-side; the browser only supplies the request and the
-    // catalog of tools that actually exist. Task 8 replaces the heuristic paths
-    // above so this becomes the only route.
-    try {
-        const { plan } = await requestPlan({
-            prompt,
-            catalog: describeCatalog(),
-            hints: rankedMatches.slice(0, 8).map(match => ({
-                toolId: match.toolId,
-                actionName: match.actionName,
-                score: match.score
-            })),
-            model
-        });
-        return plan as WorkflowPlan;
-    } catch (err) {
-        console.error('Plan generation error:', err);
-        throw err;
-    }
-};
-
-/**
- * Convert a plan into a partial workflow skeleton
- */
-export const planToWorkflow = (plan: WorkflowPlan): Workflow => {
-    const nodes: WorkflowNode[] = [];
-    const edges: WorkflowEdge[] = [];
-    const yPosition = 0;
-
-    plan.steps.forEach((step, idx) => {
-        const nodeId = step.id || `node_${idx}`;
-        let nodeType: NodeType = NodeType.AI_AGENT;
-
-        if (step.type === 'trigger') nodeType = NodeType.TRIGGER;
-        else if (step.type === 'tool') nodeType = NodeType.TOOL;
-        else if (step.type === 'decision') nodeType = NodeType.LOGIC;
-        else if (step.type === 'output') nodeType = NodeType.OUTPUT;
-
-        const inputKeys = step.inputs && step.inputs.length > 0
-            ? step.inputs
-            : idx === 0
-                ? ['source_url', 'input', 'query', 'context']
-                : ['input'];
-
-        const outputKeys = step.outputs && step.outputs.length > 0
-            ? step.outputs
-            : idx === 0
-                ? ['request', 'context']
-                : ['result'];
-
-        nodes.push({
-            id: nodeId,
-            type: nodeType,
-            position: { x: 300 + idx * 250, y: yPosition },
-            data: {
-                label: step.label,
-                description: step.description,
-                type: nodeType,
-                stateContract: {
-                    inputKeys,
-                    outputKeys
-                }
-            }
-        } as WorkflowNode);
-
-        // Connect to previous node
-        if (idx > 0) {
-            edges.push({
-                id: `edge_${idx - 1}_${idx}`,
-                source: nodes[idx - 1].id,
-                target: nodeId,
-                animated: true
-            } as WorkflowEdge);
-        }
-    });
-
-    return {
-        nodes,
-        edges,
-        initialState: {}
-    };
-};
-
-/**
- * Generate a single node based on plan step and available connectors
- */
-const getCanonicalStepNode = (step: PlanStep): Record<string, any> | null => {
-    const normalized = `${step.label || ''} ${step.description || ''}`.toLowerCase();
-
-    if (/start|initialize|capture the input/.test(normalized)) {
-        return {
-            label: 'Start',
-            description: 'Initialize the workflow and capture the input request.',
-            stateContract: { inputKeys: [], outputKeys: ['request'] }
-        };
-    }
-
-    if (/(scrap|crawl|extract|fetch|collect|read.*page|source data|capture)/.test(normalized)) {
-        return {
-            label: 'Scrape source data',
-            description: 'Read the target page or source content and extract the relevant records.',
-            stateContract: { inputKeys: ['source_url'], outputKeys: ['raw_data'], externalInputKeys: ['source_url'] }
-        };
-    }
-
-    if (/(analyz|sentiment|categor|group|review|summariz|classif|feedback)/.test(normalized)) {
-        return {
-            label: 'Analyze and group results',
-            description: 'Classify, score, or summarize the extracted data before downstream actions.',
-            stateContract: { inputKeys: ['raw_data', 'context'], outputKeys: ['categorized_results'] }
-        };
-    }
-
-    if (/(save|sheet|spreadsheet|append|log|store|report)/.test(normalized)) {
-        return {
-            label: 'Save results to Google Sheets',
-            description: 'Write the final structured output to a spreadsheet for reporting and follow-up.',
-            toolId: 'google_sheets',
-            toolAction: 'append_row',
-            stateContract: {
-                inputKeys: ['spreadsheetId', 'categorized_results', 'rows', 'data'],
-                outputKeys: ['updatedRange', 'updatedRows'],
-                externalInputKeys: ['spreadsheetId']
-            }
-        };
-    }
-
-    if (/(email|gmail|send|notify)/.test(normalized)) {
-        return {
-            label: 'Send result via email',
-            description: 'Notify the user or team with the processed output.',
-            toolId: 'gmail',
-            toolAction: 'send_email',
-            stateContract: {
-                inputKeys: ['to', 'subject', 'body', 'result'],
-                outputKeys: ['email_sent_id', 'email_status']
-            }
-        };
-    }
-
-    if (/(slack|message|alert)/.test(normalized)) {
-        return {
-            label: 'Notify in Slack',
-            description: 'Send the final result or summary to the relevant Slack channel.',
-            toolId: 'slack',
-            toolAction: 'send_message',
-            stateContract: {
-                inputKeys: ['channel', 'message', 'result'],
-                outputKeys: ['sent_message_id']
-            }
-        };
-    }
-
-    if (/(result|return|final|output)/.test(normalized)) {
-        return {
-            label: 'Return result',
-            description: 'Return the final workflow result to the user or downstream node.',
-            stateContract: { inputKeys: ['result'], outputKeys: ['final_output'] }
-        };
-    }
-
-    if (step.toolName) {
-        return {
-            label: step.label,
-            description: step.description,
-            toolId: step.toolName === 'Google Sheets' ? 'google_sheets' : undefined,
-            toolAction: step.toolName === 'Google Sheets' ? 'append_row' : undefined,
-            stateContract: {
-                inputKeys: step.inputs || ['input'],
-                outputKeys: step.outputs || ['result']
-            }
-        };
-    }
-
-    return null;
-};
-
-export const generateNodeForStep = async (
-    step: PlanStep,
-    model: string,
-    availableTools: string[],
-    preferredMatches: CapabilityMatch[] = []
-): Promise<Record<string, any>> => {
-    const canonical = getCanonicalStepNode(step);
-    if (canonical) {
-        return canonical;
-    }
-
-    const rankedMatches = preferredMatches.length > 0 ? preferredMatches : rankToolMatches(`${step.label} ${step.description}`);
-    const reusableMatch = rankedMatches.length > 0 ? findReusableToolTemplate(`${step.label} ${step.description}`) : null;
-    const preferredToolMatch = preferredMatches.length > 0
-        ? preferredMatches.find(match => {
-            const labelText = `${step.label} ${step.description}`.toLowerCase();
-            const toolName = match.toolName.toLowerCase();
-            const actionName = match.actionName.replace(/_/g, ' ').toLowerCase();
-            return labelText.includes(toolName) || labelText.includes(actionName) || labelText.includes(match.toolId.toLowerCase());
-        }) || preferredMatches[0]
-        : null;
-
-    if (reusableMatch && (availableTools.length === 0 || availableTools.includes(reusableMatch.toolId))) {
-        const bestMatchByStep = preferredToolMatch || rankedMatches.find(match => match.toolId === reusableMatch.toolId && match.actionName === reusableMatch.toolAction) || rankedMatches[0];
-        return {
-            label: reusableMatch.label,
-            description: reusableMatch.description,
-            toolId: reusableMatch.toolId,
-            toolAction: reusableMatch.toolAction,
-            capabilityMatch: bestMatchByStep,
-            stateContract: {
-                inputKeys: reusableMatch.inputKeys,
-                outputKeys: reusableMatch.outputKeys
-            }
-        };
-    }
-
-    if (preferredToolMatch) {
-        const tool = getAllTools().find(t => t.id === preferredToolMatch.toolId);
-        const action = tool?.actions.find(a => a.name === preferredToolMatch.actionName);
-        if (tool && action && (availableTools.length === 0 || availableTools.includes(tool.id))) {
-            return {
-                label: `${tool.name}: ${action.name.replace(/_/g, ' ')}`,
-                description: action.description,
-                toolId: tool.id,
-                toolAction: action.name,
-                capabilityMatch: preferredToolMatch,
-                stateContract: {
-                    inputKeys: action.inputKeys,
-                    outputKeys: action.outputKeys
-                }
-            };
-        }
-    }
-
-    const nodePrompt = `Generate a workflow node that performs this task:\n\nSTEP: "${step.label}"\nDESCRIPTION: "${step.description}"\nTYPE: "${step.type}"\n\nAvailable tools: ${availableTools.join(', ')}\n\nReturn ONLY valid JSON:\n{\n  "label": "Node name",\n  "description": "Instructions",\n  "toolId": "tool_id_if_applicable",\n  "toolAction": "action_name_if_applicable",\n  "stateContract": {\n    "inputKeys": ["key1"],\n    "outputKeys": ["result"]\n  }\n}`;
-
-    // Fallback: ask the server to generate a small workflow for this step and
-    // extract the node from it. The provider credential stays server-side.
-    try {
-        const { workflow } = await requestWorkflow({
-            prompt: nodePrompt,
-            catalog: describeCatalog(),
-            model
-        });
-        const wf = normalizeGeneratedWorkflow(workflow);
-        // If returned workflow has a node matching label, use it; else use first node
-        const found = wf.nodes.find(n => (n.data?.label || '').toLowerCase().includes((step.label || '').toLowerCase())) || wf.nodes[0];
-        if (found) {
-            return {
-                label: found.data?.label || step.label,
-                description: found.data?.description || step.description,
-                toolId: found.data?.toolId,
-                toolAction: found.data?.toolAction,
-                stateContract: found.data?.stateContract || { inputKeys: step.inputs || [], outputKeys: step.outputs || ['result'] }
-            };
-        }
-    } catch (err) {
-        console.error(`Failed to generate node for step "${step.label}" via local AI:`, err);
-    }
-
-    // Final fallback: basic node
-    return {
+export function buildNodeFromPlanStep(step: PlanStep): NodeData {
+    const base = {
         label: step.label,
         description: step.description,
+        type: NODE_TYPE_FOR_STEP[step.type]
+    };
+
+    // An unsupported step is a placeholder for a gap. It gets NO output keys, so
+    // the executor cannot quietly hand it to an LLM and pretend it ran.
+    if (step.unsupported) {
+        return {
+            ...base,
+            unsupported: true,
+            unsupportedReason:
+                step.unsupportedReason ?? 'No connected tool provides this capability.',
+            stateContract: { inputKeys: step.inputs, outputKeys: [] }
+        };
+    }
+
+    if (step.toolId && step.toolAction) {
+        const action = getTool(step.toolId)?.actions.find(a => a.name === step.toolAction);
+        if (action) {
+            return {
+                ...base,
+                type: NodeType.TOOL,
+                toolId: step.toolId,
+                toolAction: step.toolAction,
+                // Surfaced for the UI. Enforcement stays in the registry, so a
+                // saved workflow cannot opt out of an irreversible action's gate.
+                requiresApproval: actionRequiresApproval(step.toolId, step.toolAction),
+                stateContract: {
+                    // The schema owns these keys, not the model's prose.
+                    inputKeys: action.inputKeys,
+                    outputKeys: action.outputKeys,
+                    externalInputKeys: getExternalInputKeys(step.toolId, step.toolAction)
+                }
+            };
+        }
+    }
+
+    return {
+        ...base,
         stateContract: {
-            inputKeys: step.inputs || [],
-            outputKeys: step.outputs || ['result']
+            inputKeys: step.inputs,
+            outputKeys: step.outputs.length > 0 ? step.outputs : ['result']
         }
     };
-};
+}
+
+/** Turn a validated plan into a linear graph. */
+export function planToWorkflow(plan: WorkflowPlan): Workflow {
+    const nodes: WorkflowNode[] = plan.steps.map((step, index) => ({
+        id: step.id,
+        type: NODE_TYPE_FOR_STEP[step.type],
+        position: { x: 300 + index * 250, y: 0 },
+        data: buildNodeFromPlanStep(step)
+    }));
+
+    const edges: WorkflowEdge[] = nodes.slice(1).map((node, index) => ({
+        id: `edge_${nodes[index].id}_${node.id}`,
+        source: nodes[index].id,
+        target: node.id
+    }));
+
+    return { nodes, edges, initialState: {} };
+}

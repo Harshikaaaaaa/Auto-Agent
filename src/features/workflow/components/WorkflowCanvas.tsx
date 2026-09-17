@@ -32,14 +32,14 @@ import {
     Redo2,
     CheckCircle2
 } from 'lucide-react';
-import { generateWorkflowPlan, planToWorkflow, generateNodeForStep } from '@features/ai/services/workflowPlanGenerator';
+import { generateWorkflowPlan, planToWorkflow, PlanValidationError } from '@features/ai/services/workflowPlanGenerator';
 import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
 import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
-import { getTool, getAllTools, getToolCapabilityMatches } from '@features/tools/toolRegistry';
+import { getTool, getAllTools } from '@features/tools/toolRegistry';
 import type { FlowEdge, ReusableNodeTemplate } from '@features/workflow/types';
 import { validateCondition } from '@features/workflow/services/safeExpression';
 import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
@@ -732,42 +732,6 @@ export function WorkflowCanvas() {
     const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => setSelectedNodeId(node.id), []);
     const onPaneClick = useCallback(() => setSelectedNodeId(null), []);
 
-    const validateGeneratedPlan = useCallback((plan: any) => {
-        if (!plan) return plan;
-
-        const normalizedSteps = Array.isArray(plan.steps) ? plan.steps : [];
-        if (normalizedSteps.length < 3) {
-            normalizedSteps.push({
-                id: `branch_${Date.now()}`,
-                order: normalizedSteps.length + 1,
-                type: 'decision',
-                label: 'Validation step',
-                description: 'Check whether the output requires a follow-up action or routing decision.'
-            });
-        }
-
-        if (normalizedSteps.length < 4) {
-            normalizedSteps.push({
-                id: `result_${Date.now()}`,
-                order: normalizedSteps.length + 1,
-                type: 'output',
-                label: 'Final result',
-                description: 'Return the final output after the workflow is validated.'
-            });
-        }
-
-        const nextRequiredTools = Array.isArray(plan.requiredTools) && plan.requiredTools.length > 0
-            ? Array.from(new Set(plan.requiredTools))
-            : getAllTools().slice(0, 2).map(tool => tool.id);
-
-        return {
-            ...plan,
-            steps: normalizedSteps,
-            requiredTools: nextRequiredTools,
-            capabilityMatches: Array.isArray(plan.capabilityMatches) ? plan.capabilityMatches : getToolCapabilityMatches(getActivePrompt()).slice(0, 5)
-        };
-    }, [getActivePrompt]);
-
     const handleMagicGenerate = async () => {
         const prompt = getActivePrompt();
         const promptAnalysis = isMeaningfulWorkflowPrompt(prompt);
@@ -804,14 +768,16 @@ export function WorkflowCanvas() {
         setIsGenerating(true);
         try {
             const modelForGeneration = effectiveModel;
-            const plan = validateGeneratedPlan(await generateWorkflowPlan(promptAnalysis.normalized || prompt, modelForGeneration));
+            const plan = await generateWorkflowPlan(promptAnalysis.normalized || prompt, modelForGeneration);
             const workflowSkeleton = planToWorkflow(plan);
-            const capabilityMatches = getToolCapabilityMatches(prompt).slice(0, 5);
+            // The plan's own bindings, validated against the registry. Keyword
+            // rankings are not shown here: they no longer decide anything, and
+            // presenting them as routing would misdescribe what happened.
             const skeletonWithMeta = {
                 ...workflowSkeleton,
                 prompt,
-                plan: { ...plan, capabilityMatches },
-                capabilityMatches
+                plan,
+                capabilityMatches: plan.capabilityMatches
             };
             setWorkflowPlan(skeletonWithMeta);
             const initStatuses: Record<string, 'pending' | 'generating' | 'done' | 'error'> = {};
@@ -828,13 +794,20 @@ export function WorkflowCanvas() {
             }
         } catch (err) {
             console.error(err);
+            // Say which of the two failed: a plan that contradicted the tool
+            // catalog needs a different fix from a provider that was unreachable.
+            const detail = err instanceof PlanValidationError
+                ? `I could not build a plan that matches the connected tools:\n- ${err.issues.join('\n- ')}`
+                : err instanceof Error
+                    ? `I hit a problem generating that flow: ${err.message}`
+                    : 'I hit a problem generating that flow.';
+
             if (activeId) {
                 setTaskSessions(prev => prev.map(task => task.id === activeId ? {
                     ...task,
-                    messages: [...task.messages, { role: 'assistant', text: 'I hit a problem generating that flow. Try a simpler workflow request or add the missing tool context.' }]
+                    messages: [...task.messages, { role: 'assistant', text: detail }]
                 } : task));
             }
-            alert('Failed to generate workflow');
         } finally {
             setIsGenerating(false);
         }
@@ -961,40 +934,21 @@ export function WorkflowCanvas() {
             markerEnd: { type: MarkerType.ArrowClosed, color: '#2dd4bf' }
         }));
         
-        // Add nodes one by one with delay to show streaming effect, generating detailed node data per step
-        const availableTools = getAllTools().map(t => t.id);
+        // Stream the nodes onto the canvas one at a time.
+        //
+        // There is no per-node model call here any more. Node data is derived
+        // from the validated plan step by `buildNodeFromPlanStep`, so what the
+        // preview showed is exactly what lands on the canvas. Previously each
+        // node was re-generated by asking the model again and then running the
+        // answer through a keyword ladder, which is how a plan and its canvas
+        // could disagree.
         for (let i = 0; i < formattedNodes.length; i++) {
-            const skeleton = formattedNodes[i];
-            // generate detailed config for this step using selectedModel
-            try {
-                setGenerationStatuses(prev => ({ ...prev, [skeleton.id]: 'generating' }));
-                const gen = await generateNodeForStep({
-                    id: skeleton.id,
-                    order: i + 1,
-                    type: skeleton.data?.type || 'process',
-                    label: skeleton.data?.label,
-                    description: skeleton.data?.description
-                }, effectiveModel, availableTools as string[], workflowPlan?.capabilityMatches || []);
-
-                const merged = {
-                    ...skeleton,
-                    data: {
-                        ...skeleton.data,
-                        ...gen
-                    }
-                };
-
-                await new Promise(resolve => setTimeout(resolve, 300));
-                setNodes(prev => [...prev, merged]);
-                setGenerationStatuses(prev => ({ ...prev, [skeleton.id]: 'done' }));
-                setPlanStep(i + 1);
-            } catch (e) {
-                console.error('Node generation error:', e);
-                await new Promise(resolve => setTimeout(resolve, 300));
-                setNodes(prev => [...prev, skeleton]);
-                setGenerationStatuses(prev => ({ ...prev, [skeleton.id]: 'error' }));
-                setPlanStep(i + 1);
-            }
+            const node = formattedNodes[i];
+            setGenerationStatuses(prev => ({ ...prev, [node.id]: 'generating' }));
+            await new Promise(resolve => setTimeout(resolve, 120));
+            setNodes(prev => [...prev, node]);
+            setGenerationStatuses(prev => ({ ...prev, [node.id]: 'done' }));
+            setPlanStep(i + 1);
         }
         
         setEdges(formattedEdges);

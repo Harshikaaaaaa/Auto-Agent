@@ -99,7 +99,7 @@ export function renderCatalog(catalog) {
  * different one because it is "close enough", is called out as forbidden —
  * that substitution is exactly the defect this replaces.
  */
-export function buildPlanPrompt({ prompt, catalog, hints = [] }) {
+export function buildPlanPrompt({ prompt, catalog, hints = [], repairFeedback }) {
   const hintBlock =
     hints.length > 0
       ? `\n## KEYWORD HINTS (weak signal, NOT a decision)\n` +
@@ -110,7 +110,14 @@ export function buildPlanPrompt({ prompt, catalog, hints = [] }) {
         `genuinely fit the request.\n`
       : '';
 
+  // On a retry, say exactly what was wrong. Repeating the same prompt would most
+  // likely reproduce the same invalid output.
+  const repairBlock = repairFeedback
+    ? `\n## YOUR PREVIOUS ANSWER WAS REJECTED\n${fence(repairFeedback)}\nFix precisely these problems. Everything else about the format stays the same.\n`
+    : '';
+
   return `You are a workflow architect. Convert the user's request into a structured, ordered plan.
+${repairBlock}
 
 ${UNTRUSTED_NOTE}
 

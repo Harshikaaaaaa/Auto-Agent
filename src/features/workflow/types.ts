@@ -55,6 +55,12 @@ export interface GraphMetadata {
 export interface NodeStateContract {
     inputKeys: string[];
     outputKeys: string[];
+    /**
+     * The subset of `inputKeys` the user must supply, because no upstream step
+     * produces them (a spreadsheet id, a target URL). Derived from the bound
+     * action's schema by the planner — see `getExternalInputKeys`.
+     */
+    externalInputKeys?: string[];
     reducer?: 'overwrite' | 'append' | 'merge';
 }
 
@@ -97,6 +103,13 @@ export interface NodeData {
     // Runtime safety gates
     requiresApproval?: boolean;
     approvalMessage?: string;
+    /**
+     * The planner could not bind this step to any registered action. The node is
+     * a visible placeholder for the gap, and the executor refuses to run it
+     * rather than handing it to an LLM and reporting success.
+     */
+    unsupported?: boolean;
+    unsupportedReason?: string;
     // Other dynamic fields (e.g. initialState, configuredRecipient)
     [key: string]: any;
 }

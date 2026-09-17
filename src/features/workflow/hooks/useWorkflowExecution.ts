@@ -1,22 +1,56 @@
 import { useState, useCallback, useRef } from 'react';
 import { Node, Edge } from 'reactflow';
-import { ExecutionLog, FlowEdge, GraphState } from '@features/workflow/types';
+import { ExecutionLog, FlowEdge, GraphState, WorkflowNode } from '@features/workflow/types';
 import { executeNodeAction } from '@features/ai/services/aiService';
 import { WorkflowContextBuffer } from '@features/ai/types';
-import { actionRequiresApproval, getTool } from '@features/tools/toolRegistry';
+import {
+    actionRequiresApproval,
+    findActionsByCapability,
+    getActionSideEffect,
+    getTool
+} from '@features/tools/toolRegistry';
 import { evaluateCondition as evaluateSafeCondition } from '@features/workflow/services/safeExpression';
+import { missingExternalInputs } from '@features/workflow/services/externalInputs';
+import {
+    MAX_RETRY_ATTEMPTS,
+    NodeExecutionError,
+    UNSUPPORTED_STEP_PREFIX,
+    classifyFailureMessage,
+    detectActionFailure,
+    isRetryable,
+    remedyFor,
+    retryDelayMs,
+    type FailureKind
+} from '@features/workflow/services/nodeFailure';
 import '@features/tools/connectors'; // ensure all tools are registered
 
 const EXECUTION_CHECKPOINT_KEY = 'autoagent_runtime_checkpoint';
 
 /**
- * Marks a failure that retrying cannot fix.
+ * Other registered actions that provide the same capability as the one that just
+ * failed, best first.
  *
- * A step the planner marked `unsupported` has no tool behind it. Running it
- * three times changes nothing, and falling through to the generic AI branch
- * would make the run report success for work that never happened.
+ * SUGGESTED, never substituted. Automatically rerouting a failed `chat.send`
+ * from Slack to WhatsApp, or a failed `email.send` to a chat tool, would be the
+ * same wrong-tool substitution that Tasks 8 and 10 removed from planning and
+ * chat editing: the user asked for a specific destination, and "resilience" that
+ * silently delivers somewhere else is worse than a clear failure. So the
+ * alternatives are named in the log for a human to choose.
  */
-const UNSUPPORTED_STEP_PREFIX = 'Unsupported step:';
+function alternativeProvidersFor(toolId?: string, actionName?: string): string[] {
+    if (!toolId || !actionName) return [];
+    const action = getTool(toolId)?.actions.find(a => a.name === actionName);
+    if (!action) return [];
+
+    const alternatives = new Set<string>();
+    for (const capability of action.capabilities) {
+        for (const candidate of findActionsByCapability(capability)) {
+            if (candidate.toolId === toolId && candidate.action.name === actionName) continue;
+            alternatives.add(`${candidate.toolId}.${candidate.action.name}`);
+        }
+    }
+    return Array.from(alternatives);
+}
 
 type RuntimeExecutionCheckpoint = {
     runId: string;
@@ -153,6 +187,43 @@ export const useWorkflowExecution = (
 
     const executeFlow = useCallback(async () => {
         if (nodes.length === 0) return;
+
+        // ── Pre-flight: values no step can produce ──
+        //
+        // An external input is one nothing upstream writes: a spreadsheet id, a
+        // target URL, a recipient. Starting a run without one means the first few
+        // steps do real work and then the bound action fails on an empty field,
+        // several nodes and one confusing error later. Checked here so the run
+        // never starts.
+        const availableAtStart = new Set<string>();
+        nodes.forEach(node => {
+            if (node.data.initialState && typeof node.data.initialState === 'object') {
+                Object.keys(node.data.initialState).forEach(key => availableAtStart.add(key));
+            }
+        });
+
+        const missing = missingExternalInputs(
+            nodes as unknown as WorkflowNode[],
+            availableAtStart
+        );
+
+        if (missing.length > 0) {
+            const detail = missing.map(item => `${item.label} needs "${item.key}"`).join('; ');
+            setExecutionLogs([
+                {
+                    node: missing[0].label,
+                    time: new Date().toLocaleTimeString(),
+                    output:
+                        `Cannot start: ${missing.length === 1 ? 'a required value is' : 'required values are'} ` +
+                        `missing. ${detail}. Fill these in on the step, then run again.`,
+                    status: 'failed',
+                    failureKind: 'invalid_input'
+                }
+            ]);
+            setRuntimeStatus('failed');
+            setIsExecuting(false);
+            return;
+        }
 
         const restoredCheckpoint = loadRuntimeCheckpoint();
         const canResume = restoredCheckpoint && restoredCheckpoint.status !== 'completed' && restoredCheckpoint.status !== 'failed';
@@ -335,10 +406,10 @@ export const useWorkflowExecution = (
                 // the LLM, which would return plausible text and the run would be
                 // logged as completed.
                 if (node.data.unsupported) {
-                    throw new Error(
+                    throw new NodeExecutionError(
                         `${UNSUPPORTED_STEP_PREFIX} ${node.data.label || nodeId} — ` +
-                        `${node.data.unsupportedReason || 'no connected tool provides this capability'}. ` +
-                        'Connect a tool that can do it, or remove the step.'
+                        `${node.data.unsupportedReason || 'no connected tool provides this capability'}.`,
+                        { kind: 'unsupported', nodeId }
                     );
                 }
 
@@ -346,11 +417,28 @@ export const useWorkflowExecution = (
                 const { toolId, toolAction } = node.data;
                 if (toolId && toolAction) {
                     const tool = getTool(toolId);
-                    if (!tool) throw new Error(`Tool "${toolId}" not found in registry.`);
-                    if (!tool.isAuthenticated()) throw new Error(`Tool "${toolId}" is not authenticated. Connect it first.`);
+                    if (!tool) {
+                        throw new NodeExecutionError(`Tool "${toolId}" is not registered.`, {
+                            kind: 'permanent',
+                            nodeId,
+                            toolId,
+                            toolAction
+                        });
+                    }
+                    if (!tool.isAuthenticated()) {
+                        throw new NodeExecutionError(
+                            `${tool.name} is not authenticated. Connect it first.`,
+                            { kind: 'auth', nodeId, toolId, toolAction }
+                        );
+                    }
 
                     const action = tool.actions.find(a => a.name === toolAction);
-                    if (!action) throw new Error(`Action "${toolAction}" not found on tool "${toolId}".`);
+                    if (!action) {
+                        throw new NodeExecutionError(
+                            `Action "${toolAction}" does not exist on tool "${toolId}".`,
+                            { kind: 'permanent', nodeId, toolId, toolAction }
+                        );
+                    }
 
                     // Build input: start with stateContract keys, then apply node-specific configured fields,
                     // then fill remaining action keys from the graph state.
@@ -387,6 +475,20 @@ export const useWorkflowExecution = (
                     }
 
                     nodeOutput = await action.execute(mergedInput);
+
+                    // The action reports failure through its declared `error`
+                    // output. Raised here, BEFORE the result is merged into graph
+                    // state, so a failed step cannot contribute data to the ones
+                    // after it.
+                    const failure = detectActionFailure(nodeOutput);
+                    if (failure) {
+                        throw new NodeExecutionError(failure.message, {
+                            kind: failure.kind,
+                            nodeId,
+                            toolId,
+                            toolAction
+                        });
+                    }
                 } else if (node.data.initialState) {
                     // Node has initialState — use it directly as output
                     nodeOutput = {};
@@ -453,19 +555,12 @@ export const useWorkflowExecution = (
                     durationMs: nodeDurationMs
                 }]);
 
-                // Check if this was a tool action that failed
-                // Tool actions often return error status in specific output keys
-                const isToolFailure = node.data.toolId && (
-                    (nodeOutput.email_status && String(nodeOutput.email_status).toLowerCase().includes('error')) ||
-                    (nodeOutput.email_status && String(nodeOutput.email_status).toLowerCase().includes('validation failed')) ||
-                    (nodeOutput.status && String(nodeOutput.status).toLowerCase().includes('error')) ||
-                    (nodeOutput.status && String(nodeOutput.status).toLowerCase().includes('failed'))
-                );
-
-                if (isToolFailure) {
-                    console.error('[WORKFLOW] Tool action failed:', nodeOutput);
-                    throw new Error(`Tool action failed: ${nodeOutput.email_status || nodeOutput.status || 'Unknown error'}`);
-                }
+                // Tool failure is detected above, before the merge, by reading the
+                // declared `error` output. The substring sniff that used to live
+                // here — `email_status` or `status` containing 'error' or 'failed'
+                // — reported Gmail's "Authentication expired", "rate limit
+                // exceeded" and "was rejected by Gmail" as successful sends, and
+                // never looked at `web`/`files`/`slack` results at all.
 
                 setNodes(nds => nds.map(n =>
                     n.id === nodeId
@@ -473,25 +568,40 @@ export const useWorkflowExecution = (
                         : n
                 ));
             } catch (err) {
-                const retryCount = executionControlRef.current.retryCounts[nodeId] || 0;
-                const maxRetries = 2;
+                const attemptsSoFar = executionControlRef.current.retryCounts[nodeId] || 0;
+                const message = err instanceof Error ? err.message : String(err);
 
-                const isPermanent = err instanceof Error && (
-                    err.message.includes('not authenticated') ||
-                    err.message.includes('connect it first') ||
-                    err.message.startsWith(UNSUPPORTED_STEP_PREFIX)
-                );
+                // Why it failed decides what happens next. Previously every
+                // failure was retried twice, immediately: an unauthenticated tool
+                // and a missing spreadsheet id both burned three attempts before
+                // reporting the same thing they reported the first time.
+                const kind: FailureKind =
+                    err instanceof NodeExecutionError ? err.kind : classifyFailureMessage(message);
 
-                if (retryCount < maxRetries && !isPermanent) {
-                    executionControlRef.current.retryCounts[nodeId] = retryCount + 1;
+                // An irreversible action is never retried. A send that times out
+                // may already have gone through, and a second attempt would
+                // deliver twice.
+                const irreversible =
+                    getActionSideEffect(node.data.toolId, node.data.toolAction) === 'irreversible';
+
+                const mayRetry =
+                    isRetryable(kind) && !irreversible && attemptsSoFar < MAX_RETRY_ATTEMPTS;
+
+                if (mayRetry) {
+                    const attempt = attemptsSoFar + 1;
+                    const delay = retryDelayMs(attempt);
+                    executionControlRef.current.retryCounts[nodeId] = attempt;
                     visited.delete(nodeId);
                     queue.unshift(nodeId);
 
                     setExecutionLogs(prev => [...prev, {
                         node: node.data.label,
                         time: new Date().toLocaleTimeString(),
-                        output: `Retrying node after failure (${retryCount + 1}/${maxRetries}) — ${String(err)}`,
+                        output:
+                            `${message}\nRetrying in ${delay}ms (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS}) — ` +
+                            `classified as ${kind}.`,
                         status: 'retrying',
+                        failureKind: kind,
                         stateSnapshot: { ...state }
                     }]);
 
@@ -500,15 +610,49 @@ export const useWorkflowExecution = (
                             ? { ...n, data: { ...n.data, isRunning: false, lastSuccess: false } }
                             : n
                     ));
+
+                    // Backoff with jitter, so a graph of nodes hitting one
+                    // throttled API does not retry in lockstep.
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    if (executionControlRef.current.cancelRequested) {
+                        setRuntimeStatus('cancelled');
+                        setIsExecuting(false);
+                        return;
+                    }
                     continue;
                 }
 
                 console.error(`Error executing node ${nodeId}:`, err);
+
+                // Name the other tools that provide the same capability. A
+                // suggestion for a human, NOT an automatic reroute — see
+                // `alternativeProvidersFor`.
+                const alternatives = alternativeProvidersFor(
+                    node.data.toolId,
+                    node.data.toolAction
+                );
+
+                const explanation =
+                    `${message}\n${remedyFor(kind)}` +
+                    (attemptsSoFar > 0
+                        ? `\nGave up after ${attemptsSoFar + 1} attempts.`
+                        : isRetryable(kind)
+                          ? ''
+                          : `\nNot retried: a ${kind} failure does not resolve on its own.`) +
+                    (irreversible && isRetryable(kind)
+                        ? '\nNot retried automatically because this action cannot be undone.'
+                        : '') +
+                    (alternatives.length > 0
+                        ? `\nOther tools that can do this: ${alternatives.join(', ')}.`
+                        : '');
+
                 setExecutionLogs(prev => [...prev, {
                     node: node.data.label,
                     time: new Date().toLocaleTimeString(),
-                    output: String(err),
+                    output: explanation,
                     status: 'failed',
+                    failureKind: kind,
+                    alternatives,
                     stateSnapshot: { ...state }
                 }]);
                 state = {

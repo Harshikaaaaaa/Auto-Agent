@@ -1,6 +1,11 @@
 import { AI_CONFIG } from '../config';
 import type { WorkflowContextBuffer } from '../types';
-import { requestNodeExecution } from './aiClient';
+import { AiRequestError, requestNodeExecution } from './aiClient';
+import {
+    NodeExecutionError,
+    classifyFailureMessage,
+    type FailureKind
+} from '@features/workflow/services/nodeFailure';
 import '@features/tools/connectors';
 
 /**
@@ -28,14 +33,23 @@ function configuredProvider(): 'ollama' | 'gemini' | 'openrouter' {
     return AI_CONFIG.provider;
 }
 
+/** Map a transport-level AI error onto the engine's failure taxonomy. */
+function kindForRequestError(error: AiRequestError): FailureKind {
+    if (error.status === 401 || error.status === 403) return 'auth';
+    if (error.status === 429) return 'rate_limit';
+    if (error.status === 400) return 'invalid_input';
+    // status 0 is "could not reach the server", which the client marks retryable.
+    if (error.retryable) return 'transient';
+    return classifyFailureMessage(error.message);
+}
+
 /**
  * Run one AI-backed workflow node.
  *
- * NOTE ON ERRORS: a failure is reported as the error text under each declared
- * output key rather than thrown. That means the engine records the node as
- * completed with error strings as its data — a real defect, but changing it
- * moves failure semantics for every node type at once, which is Task 12's
- * subject. Preserved verbatim here so this change stays a deletion.
+ * THROWS on failure. It used to return the error text under each declared output
+ * key, which meant the engine merged `{ summary: 'Error: provider unavailable' }`
+ * into graph state, logged the node as completed, and let the next node treat
+ * that sentence as a summary. A run that did nothing looked successful.
  */
 export const executeNodeAction = async (
     nodeLabel: string,
@@ -57,12 +71,12 @@ export const executeNodeAction = async (
         });
         return output;
     } catch (error) {
-        console.error(`Error executing node action (${provider}):`, error);
-        return Object.fromEntries(
-            outputKeys.map(key => [
-                key,
-                `Error: ${error instanceof Error ? error.message : String(error)}`
-            ])
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        const kind =
+            error instanceof AiRequestError
+                ? kindForRequestError(error)
+                : classifyFailureMessage(message);
+
+        throw new NodeExecutionError(`${nodeLabel}: ${message}`, { kind, cause: error });
     }
 };

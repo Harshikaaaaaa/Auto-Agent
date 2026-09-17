@@ -1,5 +1,7 @@
 import {
     Capability,
+    FieldSchema,
+    FieldSchemaMap,
     SideEffect,
     Tool,
     ToolAction,
@@ -14,17 +16,45 @@ import {
 const tools = new Map<string, Tool>();
 
 /**
+ * The field every action uses to report failure.
+ *
+ * Declared here and injected into every action's output schema rather than
+ * copy-pasted into each connector, so it cannot be forgotten. The execution
+ * engine reads ONLY this field to decide whether an action failed — see
+ * `detectActionFailure`. Before Task 12 it sniffed `email_status` and `status`
+ * for the substrings 'error' and 'failed', which reported Gmail's
+ * "Authentication expired", "rate limit exceeded" and "was rejected by Gmail"
+ * results as successful sends.
+ */
+export const ACTION_ERROR_KEY = 'error';
+
+const ACTION_ERROR_FIELD: FieldSchema = {
+    type: 'string',
+    description:
+        'Set to a human-readable reason when the action failed. Absent or empty means it succeeded.'
+};
+
+/**
  * Fill in the fields the registry owns.
  *
  * `inputKeys`/`outputKeys` are DERIVED from the schemas rather than declared
  * alongside them, so the two cannot drift apart. A connector that declares its
  * own key list has it overwritten, and that is intentional.
+ *
+ * The `error` output is added to every action here. A connector that declares its
+ * own keeps that description.
  */
 function normalizeAction(action: ToolActionDefinition): ToolAction {
+    const outputSchema: FieldSchemaMap = {
+        ...action.outputSchema,
+        [ACTION_ERROR_KEY]: action.outputSchema[ACTION_ERROR_KEY] ?? ACTION_ERROR_FIELD
+    };
+
     return {
         ...action,
+        outputSchema,
         inputKeys: Object.keys(action.inputSchema),
-        outputKeys: Object.keys(action.outputSchema)
+        outputKeys: Object.keys(outputSchema)
     };
 }
 

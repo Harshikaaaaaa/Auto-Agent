@@ -32,15 +32,24 @@ export function missingExternalKeys(node: WorkflowNode): string[] {
     );
 }
 
-/** Every unfilled external input across a graph, in node order. */
+/**
+ * Every unfilled external input across a graph, in node order.
+ *
+ * `alreadyAvailable` names state keys the run will start with — anything a node
+ * carries in `initialState`. A key supplied that way is not missing even though
+ * the node's own data does not hold it, which is why the pre-run check passes it.
+ */
 export function missingExternalInputs(
-    nodes: WorkflowNode[]
+    nodes: WorkflowNode[],
+    alreadyAvailable: ReadonlySet<string> = new Set()
 ): Array<{ nodeId: string; label: string; key: string }> {
     return nodes.flatMap(node =>
-        missingExternalKeys(node).map(key => ({
-            nodeId: node.id,
-            label: node.data.label,
-            key
-        }))
+        missingExternalKeys(node)
+            .filter(key => !alreadyAvailable.has(key))
+            .map(key => ({
+                nodeId: node.id,
+                label: node.data.label,
+                key
+            }))
     );
 }

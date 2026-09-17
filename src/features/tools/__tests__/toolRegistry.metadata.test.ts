@@ -206,9 +206,11 @@ describe('capability metadata', () => {
       });
 
       expect(actionRequiresApproval('test_pager', 'page')).toBe(true);
-      // And its keys were derived without the connector declaring them.
+      // And its keys were derived without the connector declaring them. The
+      // `error` output is added by the registry, so the failure channel exists
+      // on every action whether or not a connector remembered to declare it.
       expect(getTool('test_pager')?.actions[0].inputKeys).toEqual(['message']);
-      expect(getTool('test_pager')?.actions[0].outputKeys).toEqual(['paged']);
+      expect(getTool('test_pager')?.actions[0].outputKeys).toEqual(['paged', 'error']);
     });
   });
 

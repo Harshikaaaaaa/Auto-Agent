@@ -2,6 +2,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_CONFIG } from '@features/ai/config';
+import { AiRequestError } from '@features/ai/services/aiClient';
+import { NodeExecutionError } from '@features/workflow/services/nodeFailure';
 import { executeNodeAction } from '../aiService';
 
 /**
@@ -22,9 +24,15 @@ import { executeNodeAction } from '../aiService';
  * in review.
  */
 
-vi.mock('@features/ai/services/aiClient', () => ({
-    requestNodeExecution: vi.fn()
-}));
+// Only the request function is faked. AiRequestError is the real class, because
+// aiService branches on `instanceof`.
+vi.mock('@features/ai/services/aiClient', async () => {
+    const actual =
+        await vi.importActual<typeof import('@features/ai/services/aiClient')>(
+            '@features/ai/services/aiClient'
+        );
+    return { ...actual, requestNodeExecution: vi.fn() };
+});
 
 const { requestNodeExecution } = await import('@features/ai/services/aiClient');
 const mockRequest = vi.mocked(requestNodeExecution);
@@ -154,17 +162,46 @@ describe('executeNodeAction', () => {
         });
     });
 
-    it('reports a failure under every declared output key', async () => {
+    it('throws instead of writing the error under every output key', async () => {
         mockRequest.mockRejectedValueOnce(new Error('provider unavailable'));
 
-        const output = await executeNodeAction('Step', '', {}, ['summary', 'title']);
+        // Until Task 12 this resolved to
+        // `{ summary: 'Error: provider unavailable', title: 'Error: ...' }`.
+        // The engine merged that into graph state, logged the node as completed,
+        // and the next step summarised the sentence "Error: provider unavailable"
+        // as if it were content.
+        await expect(executeNodeAction('Step', '', {}, ['summary', 'title'])).rejects.toThrow(
+            NodeExecutionError
+        );
+    });
 
-        // Preserved from the three modules this replaced. It is the wrong shape —
-        // the run is recorded as completed with error strings as data — and Task 12
-        // owns changing it. Pinned here so the change is deliberate.
-        expect(output).toEqual({
-            summary: 'Error: provider unavailable',
-            title: 'Error: provider unavailable'
+    it.each([
+        [401, 'auth'],
+        [403, 'auth'],
+        [429, 'rate_limit'],
+        [400, 'invalid_input']
+    ])('maps HTTP %i onto the %s failure kind', async (status, expected) => {
+        mockRequest.mockRejectedValueOnce(
+            new AiRequestError('upstream said no', { status, code: 'provider_error' })
+        );
+
+        await expect(executeNodeAction('Step', '', {}, ['out'])).rejects.toMatchObject({
+            kind: expected
+        });
+    });
+
+    it('treats an unreachable server as transient, so the engine retries it', async () => {
+        mockRequest.mockRejectedValueOnce(
+            new AiRequestError('Could not reach the AutoAgent server.', {
+                status: 0,
+                code: 'network_error',
+                retryable: true
+            })
+        );
+
+        await expect(executeNodeAction('Step', '', {}, ['out'])).rejects.toMatchObject({
+            kind: 'transient',
+            retryable: true
         });
     });
 });

@@ -292,6 +292,7 @@ const sendEmailAction: ToolActionDefinition = {
             return {
                 email_sent_id: '',
                 email_status: 'Error: Gmail connector is not authenticated. Please connect Gmail in the sidebar.',
+                error: 'Gmail is not authenticated. Connect Gmail before running this step.',
                 sent_to: '',
                 sent_at: ''
             };
@@ -316,6 +317,7 @@ const sendEmailAction: ToolActionDefinition = {
             return {
                 email_sent_id: '',
                 email_status: `Validation failed: ${errors.join('; ')}`,
+                error: `Validation failed: ${errors.join('; ')}`,
                 sent_to: to,
                 sent_at: ''
             };
@@ -353,28 +355,33 @@ const sendEmailAction: ToolActionDefinition = {
                     case 'auth':
                         return {
                             email_sent_id: '', sent_to: to, sent_at: '',
-                            email_status: 'Authentication expired. Please reconnect Gmail and retry.'
+                            email_status: 'Authentication expired. Please reconnect Gmail and retry.',
+                            error: 'Authentication expired. Please reconnect Gmail and retry.'
                         };
                     case 'rate_limit':
                         return {
                             email_sent_id: '', sent_to: to, sent_at: '',
-                            email_status: 'Gmail rate limit exceeded after 3 retries. Try again later.'
+                            email_status: 'Gmail rate limit exceeded after 3 retries. Try again later.',
+                            error: 'Gmail rate limit exceeded after 3 retries. Try again later.'
                         };
                     case 'invalid_recipient':
                         return {
                             email_sent_id: '', sent_to: to, sent_at: '',
-                            email_status: `Recipient "${to}" was rejected by Gmail. Verify the address.`
+                            email_status: `Recipient "${to}" was rejected by Gmail. Verify the address.`,
+                            error: `Recipient "${to}" was rejected by Gmail. Verify the address.`
                         };
                     case 'too_large':
                         return {
                             email_sent_id: '', sent_to: to, sent_at: '',
-                            email_status: 'Email exceeds Gmail 25 MB limit. Consider using a Google Drive link.'
+                            email_status: 'Email exceeds Gmail 25 MB limit. Consider using a Google Drive link.',
+                            error: 'Email exceeds Gmail 25 MB limit. Consider using a Google Drive link.'
                         };
                 }
             }
             return {
                 email_sent_id: '', sent_to: to, sent_at: '',
-                email_status: `Failed to send: ${err instanceof Error ? err.message : String(err)}`
+                email_status: `Failed to send: ${err instanceof Error ? err.message : String(err)}`,
+                error: `Failed to send: ${err instanceof Error ? err.message : String(err)}`
             };
         }
     }
@@ -407,9 +414,13 @@ const readInboxAction: ToolActionDefinition = {
     },
     execute: async (input) => {
         if (!isGmailAvailable()) {
+            // Was `{ emails: '[]', email_count: '0' }` — an empty inbox is
+            // indistinguishable from a disconnected one, so downstream steps
+            // summarised "no messages" when the real problem was no token.
             return {
-                emails: '[]',
-                email_count: '0'
+                emails: [],
+                email_count: 0,
+                error: 'Gmail is not authenticated. Connect Gmail before running this step.'
             };
         }
 

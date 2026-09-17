@@ -56,9 +56,11 @@ export const ExecutionMonitor: React.FC<ExecutionMonitorProps> = ({
         const label = node.data?.label || node.id;
         const logs = executionLogs.filter(log => log.node === label);
         const latest = logs[logs.length - 1];
+        // The engine sets `status` on every log entry, so trust it. This used to
+        // fall back to searching the OUTPUT for 'error' and 'failed', which
+        // marked a perfectly successful step as failed whenever the page it
+        // scraped happened to contain either word.
         const inferredStatus = latest?.status
-            || (latest?.output?.toLowerCase().includes('retrying') ? 'retrying' : undefined)
-            || (latest?.output?.toLowerCase().includes('error') || latest?.output?.toLowerCase().includes('failed') ? 'failed' : undefined)
             || (latest ? 'completed' : currentNodeLabel === label ? 'running' : 'pending');
         return { node, label, log: latest, status: inferredStatus };
     });
@@ -148,6 +150,14 @@ export const ExecutionMonitor: React.FC<ExecutionMonitorProps> = ({
                                 <div className="flex items-center gap-2">
                                     {duration && (
                                         <span className="text-white/30 font-mono">{duration}</span>
+                                    )}
+                                    {/* Why it failed, so "reconnect the tool" and
+                                        "one of the inputs is wrong" are told apart
+                                        at a glance. */}
+                                    {displayLog.failureKind && (
+                                        <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] text-red-300">
+                                            {displayLog.failureKind.replace(/_/g, ' ')}
+                                        </span>
                                     )}
                                     <span className={isFailed ? 'text-red-400' : status === 'pending' ? 'text-white/30' : 'text-emerald-500'}>
                                         {statusLabel}

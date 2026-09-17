@@ -1,5 +1,6 @@
 import type { Edge, Node } from 'reactflow';
 import { NodeType } from '@/shared/types';
+import type { FailureKind } from '@features/workflow/services/nodeFailure';
 
 // ==================== REACT FLOW BRIDGE TYPES ====================
 
@@ -148,4 +149,14 @@ export interface ExecutionLog {
     stateSnapshot?: Record<string, any>;
     /** Duration in milliseconds */
     durationMs?: number;
+    /**
+     * Why the step failed, from the shared taxonomy in `nodeFailure.ts`.
+     * Drives whether it was retried and what the user is told to do.
+     */
+    failureKind?: FailureKind;
+    /**
+     * Other registered `toolId.action` pairs providing the same capability.
+     * Offered for a human to choose — the engine never substitutes one.
+     */
+    alternatives?: string[];
 }

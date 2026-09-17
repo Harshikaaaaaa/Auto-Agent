@@ -53,6 +53,34 @@ const MIGRATIONS = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
     ],
   },
+  {
+    id: '003_create_tool_credentials',
+    statements: [
+      // OAuth tokens for connected tools, one row per owner per tool.
+      //
+      // The browser used to hold these in localStorage in plain text. They live
+      // here now, and both token columns are AES-256-GCM ciphertext (see
+      // `credentialCrypto.js`) so a database dump does not contain usable Google
+      // credentials. The columns are TEXT because the encrypted envelope is
+      // several times longer than the token and Google does not bound token
+      // length.
+      `CREATE TABLE IF NOT EXISTS tool_credentials (
+         owner_id           VARCHAR(64)  NOT NULL,
+         tool_id            VARCHAR(64)  NOT NULL,
+         provider           VARCHAR(32)  NOT NULL,
+         access_token_enc   TEXT         NOT NULL,
+         refresh_token_enc  TEXT         NULL,
+         expires_at         DATETIME(3)  NULL,
+         scopes             JSON         NOT NULL,
+         connected_at       DATETIME(3)  NOT NULL,
+         updated_at         DATETIME(3)  NOT NULL,
+         PRIMARY KEY (owner_id, tool_id),
+         CONSTRAINT fk_tool_credentials_owner
+           FOREIGN KEY (owner_id) REFERENCES owners (id)
+           ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
 ];
 
 /** Ensure the bookkeeping table exists before anything else. */

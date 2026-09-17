@@ -8,6 +8,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { setupWorkflowRoutes } from './workflows/routes.js';
 import { setupFetchRoutes } from './fetch/routes.js';
+import { setupOAuthRoutes } from './oauth/routes.js';
+import { setupGoogleRoutes } from './google/routes.js';
 import { closePool, ensureDatabaseExists, isDatabaseReachable, describeConnection } from './db/pool.js';
 import { importLegacyWorkflows, runMigrations } from './db/migrations.js';
 import { OPERATOR_SUBJECT } from './auth/session.js';
@@ -23,7 +25,13 @@ import {
     errorHandler,
 } from './middleware/security.js';
 import { requireSession, setupAuthRoutes } from './auth/session.js';
-import { AI_PATHS, FETCH_PATHS, WHATSAPP_PATHS, WORKFLOW_PATHS } from './config/protectedPaths.js';
+import {
+    AI_PATHS,
+    CONNECTOR_PATHS,
+    FETCH_PATHS,
+    WHATSAPP_PATHS,
+    WORKFLOW_PATHS,
+} from './config/protectedPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,6 +84,10 @@ app.use(WORKFLOW_PATHS, limiters.general, requireSession);
 // Outbound fetch is session-gated and separately budgeted: an unauthenticated or
 // unlimited version of it is a network scanning tool.
 app.use(FETCH_PATHS, limiters.fetch, requireSession);
+// Connecting a Google tool binds a grant to the signed-in operator, and the
+// proxy spends it. Anonymous access here would let a stranger send mail from the
+// operator's account, so the callback that WRITES the credential is gated too.
+app.use(CONNECTOR_PATHS, limiters.google, requireSession);
 
 // AI backend-for-frontend. Provider credentials live only on this side.
 setupAiRoutes(app);
@@ -85,6 +97,11 @@ setupWorkflowRoutes(app);
 
 // Outbound fetch, behind the SSRF policy in server/lib/ssrfGuard.js.
 setupFetchRoutes(app);
+
+// Connected-tool OAuth, and the only route through which the browser reaches
+// Google. Access tokens are stored encrypted and never sent to the client.
+setupOAuthRoutes(app);
+setupGoogleRoutes(app);
 
 /**
  * Startup probe for the configured model.

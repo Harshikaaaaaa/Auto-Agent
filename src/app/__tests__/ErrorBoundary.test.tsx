@@ -81,7 +81,10 @@ describe('ErrorBoundary', () => {
     localStorage.setItem('autoagent_task_sessions_v1', '[]');
     localStorage.setItem('autoagent_runtime_checkpoint', '{}');
     localStorage.setItem('autoagent_saved_workflows_v1', '[{"name":"keep me"}]');
-    localStorage.setItem('tool_auth_gmail', '{"token":"x"}');
+    // A key outside the volatile allowlist must survive. (Connector tokens used
+    // to live in localStorage as `tool_auth_*`; Task 13 moved them to the server,
+    // so this now stands in for any non-volatile key.)
+    localStorage.setItem('autoagent_offline_cache_v1', '{"kept":true}');
 
     const reload = vi.fn();
     Object.defineProperty(window, 'location', {
@@ -98,9 +101,9 @@ describe('ErrorBoundary', () => {
 
     expect(localStorage.getItem('autoagent_task_sessions_v1')).toBeNull();
     expect(localStorage.getItem('autoagent_runtime_checkpoint')).toBeNull();
-    // Saved work and connector auth must survive a UI reset.
+    // Saved work and other non-volatile keys must survive a UI reset.
     expect(localStorage.getItem('autoagent_saved_workflows_v1')).toBe('[{"name":"keep me"}]');
-    expect(localStorage.getItem('tool_auth_gmail')).toBe('{"token":"x"}');
+    expect(localStorage.getItem('autoagent_offline_cache_v1')).toBe('{"kept":true}');
     expect(reload).toHaveBeenCalled();
   });
 });

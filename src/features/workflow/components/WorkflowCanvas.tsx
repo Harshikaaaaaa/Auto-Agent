@@ -57,7 +57,6 @@ import type {
     WorkflowNode as WorkflowNodeModel
 } from '@features/workflow/types';
 import { validateCondition } from '@features/workflow/services/safeExpression';
-import { getDefaultSpreadsheetId } from '@features/tools/connectors/googleSheets';
 import { saveWorkflow, loadWorkflow, listWorkflows, deleteWorkflow, SavedWorkflow } from '@features/workflow/services/workflowStorage';
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
 import { ExportModal } from './ExportModal';
@@ -1202,12 +1201,12 @@ export function WorkflowCanvas() {
 
         nodes.forEach(node => {
             const contract = node.data?.stateContract || {};
-            if (node.data?.toolId === 'google_sheets' && getDefaultSpreadsheetId()) return;
+            // The Sheets special case is gone with the auto-created default
+            // spreadsheet: connecting Sheets no longer conjures a file to write
+            // into, so a spreadsheet id is asked for like any other external input.
             const declaredKeys = Array.isArray(contract.externalInputKeys)
                 ? contract.externalInputKeys
-                : node.data?.toolId === 'google_sheets'
-                    ? ['spreadsheetId']
-                    : (Array.isArray(contract.inputKeys) ? contract.inputKeys : []);
+                : (Array.isArray(contract.inputKeys) ? contract.inputKeys : []);
             const inputKeys = declaredKeys.filter((key: string) => {
                 if (producedKeys.has(key) || genericDerivedKeys.has(key)) return false;
                 if (key === 'page_url' && declaredKeys.includes('source_url')) return false;

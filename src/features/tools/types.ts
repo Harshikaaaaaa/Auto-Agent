@@ -147,13 +147,13 @@ export type ToolDefinition = Omit<Tool, 'actions' | 'capabilities'> & {
     capabilities?: readonly Capability[];
 };
 
-/** Persisted OAuth token for a tool */
-export interface ToolAuth {
-    toolId: string;
-    accessToken: string;
-    expiresAt: number;              // epoch ms
-    scopes: string[];
-}
+/**
+ * NOTE: there is deliberately no `ToolAuth` type here any more.
+ *
+ * It described a token the browser held in localStorage. Tokens now live only on
+ * the server, encrypted at rest — see `server/db/credentialRepository.js`. The
+ * browser's whole view of authorisation is the boolean `isAuthenticated()`.
+ */
 
 /** Tool status for UI display */
 export interface ToolStatus {

@@ -1,5 +1,11 @@
-import { ToolActionDefinition, ToolAuth, ToolDefinition } from '../types';
-import { registerTool, saveToolAuth, loadToolAuth, clearToolAuth, silentRefreshGoogleToken } from '../toolRegistry';
+import { ToolActionDefinition, ToolDefinition } from '../types';
+import { isToolConnected, registerTool } from '../toolRegistry';
+import {
+    GoogleCallError,
+    callGoogle,
+    connectTool,
+    disconnectTool
+} from '../googleClient';
 
 // ==================== GMAIL CONSTANTS ====================
 
@@ -9,40 +15,21 @@ const GMAIL_SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly'
 ];
 const MAX_RETRIES = 3;
-const SEND_TIMEOUT_MS = 30_000;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// ==================== AUTH HELPERS ====================
-
-function getStoredAuth(): (ToolAuth & { expired?: boolean }) | null {
-    return loadToolAuth(GMAIL_TOOL_ID);
-}
-
-async function getAccessToken(): Promise<string | null> {
-    const auth = getStoredAuth();
-    if (!auth) return null;
-
-    const isExpired = auth.expiresAt <= Date.now() + 60_000;
-    if ((auth as any).expired || isExpired) {
-        const refreshed = await silentRefreshGoogleToken(GMAIL_TOOL_ID, GMAIL_SCOPES);
-        if (!refreshed) {
-            clearToolAuth(GMAIL_TOOL_ID);
-            return null;
-        }
-        const fresh = loadToolAuth(GMAIL_TOOL_ID);
-        return fresh?.accessToken ?? null;
-    }
-
-    return auth.accessToken;
-}
+// ==================== AUTH ====================
 
 /**
- * Returns true if user has previously connected Gmail — even if the token has expired.
- * The proactive refresh timer in toolRegistry will handle renewing it.
+ * Whether the server holds a Gmail credential for this operator.
+ *
+ * There is no token in the browser to inspect. This used to read localStorage and
+ * report "connected" even for an expired token, on the assumption that a
+ * background refresh timer would fix it — so a send could fail with an auth error
+ * on a tool the UI showed as green. The server refreshes with a refresh token
+ * before every call, so connected now means usable.
  */
 function isGmailAvailable(): boolean {
-    const auth = getStoredAuth();
-    return auth !== null; // connected = has auth record, regardless of expiry
+    return isToolConnected(GMAIL_TOOL_ID);
 }
 
 // ==================== GMAIL API HELPERS ====================
@@ -62,88 +49,63 @@ class GmailApiError extends Error {
     }
 }
 
-/** Classify HTTP status into a typed error */
-function classifyError(status: number, body: string): GmailApiError {
-    if (status === 401 || status === 403) {
-        return new GmailApiError(
-            'Gmail authentication expired. Please reconnect Gmail.',
-            status, 'auth'
-        );
+/**
+ * Map a proxy failure onto the Gmail error taxonomy this module branches on.
+ *
+ * The server already classified the upstream status; this only translates its
+ * reason code, rather than re-parsing status numbers and response bodies in the
+ * browser.
+ */
+function classifyProxyError(err: unknown): GmailApiError {
+    if (!(err instanceof GoogleCallError)) {
+        const message = err instanceof Error ? err.message : String(err);
+        return new GmailApiError(message, 0, 'generic');
     }
-    if (status === 429) {
-        return new GmailApiError(
-            'Gmail API rate limit exceeded. Retrying...',
-            status, 'rate_limit'
-        );
+
+    switch (err.code) {
+        case 'not_connected':
+        case 'refresh_unavailable':
+        case 'google_auth_failed':
+        case 'invalid_grant':
+            return new GmailApiError(err.message, 401, 'auth');
+        case 'google_rate_limited':
+            return new GmailApiError(err.message, 429, 'rate_limit');
+        case 'google_too_large':
+            return new GmailApiError(err.message, 413, 'too_large');
+        case 'google_rejected':
+        case 'invalid_params':
+            return new GmailApiError(err.message, 400, 'invalid_recipient');
+        default:
+            return new GmailApiError(err.message, err.status, 'generic');
     }
-    if (status === 400 && body.includes('invalidArgument')) {
-        return new GmailApiError(
-            'Invalid email recipient or format.',
-            status, 'invalid_recipient'
-        );
-    }
-    if (status === 413) {
-        return new GmailApiError(
-            'Email too large — Gmail limit is 25 MB.',
-            status, 'too_large'
-        );
-    }
-    return new GmailApiError(
-        `Gmail API error (${status}): ${body.slice(0, 200)}`,
-        status, 'generic'
-    );
 }
 
-/** Authenticated fetch wrapper for Gmail API v1 */
-async function gmailApiFetch(endpoint: string, options: RequestInit = {}): Promise<any> {
-    const token = await getAccessToken();
-    if (!token) {
-        throw new GmailApiError(
-            'Gmail not authenticated. Please connect Gmail first.',
-            401, 'auth'
-        );
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-
+/**
+ * Call one Gmail operation through the server.
+ *
+ * Replaces a direct `fetch` to gmail.googleapis.com that attached a bearer token
+ * from localStorage and cleared that token on any 401.
+ */
+async function gmailCall<T>(
+    operation: 'gmail_send_message' | 'gmail_list_messages' | 'gmail_get_message',
+    params: Record<string, unknown>
+): Promise<T> {
     try {
-        const response = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/${endpoint}`,
-            {
-                ...options,
-                signal: controller.signal,
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    ...(options.headers || {})
-                }
-            }
-        );
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            if (response.status === 401 || response.status === 403) {
-                clearToolAuth(GMAIL_TOOL_ID);
-            }
-            throw classifyError(response.status, errorBody);
-        }
-
-        return response.json();
+        return await callGoogle<T>(operation, params);
     } catch (err) {
-        if (err instanceof GmailApiError) throw err;
-        if ((err as Error).name === 'AbortError') {
-            throw new GmailApiError('Gmail API request timed out (30s).', 408, 'generic');
-        }
-        throw err;
-    } finally {
-        clearTimeout(timeout);
+        throw classifyProxyError(err);
     }
 }
 
 /**
  * Retry wrapper with exponential backoff (1s, 2s, 4s).
- * Only retries on rate_limit and generic errors.
+ *
+ * RATE LIMITS ONLY. It used to retry 'generic' failures too, which for a send is
+ * unsafe: a request that times out or fails after Gmail accepted the message
+ * would be sent again, delivering twice. A 429 is a refusal — nothing was
+ * accepted — so retrying that is safe. Everything else is reported once and left
+ * to the execution engine, which deliberately never retries an irreversible
+ * action (see `nodeFailure.ts`).
  */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     let lastError: any;
@@ -152,11 +114,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
             return await fn();
         } catch (err) {
             lastError = err;
-            if (err instanceof GmailApiError) {
-                // Don't retry auth, invalid_recipient, or too_large — they won't change
-                if (err.errorType !== 'rate_limit' && err.errorType !== 'generic') {
-                    throw err;
-                }
+            if (!(err instanceof GmailApiError) || err.errorType !== 'rate_limit') {
+                throw err;
             }
             if (attempt < MAX_RETRIES - 1) {
                 await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
@@ -331,10 +290,7 @@ const sendEmailAction: ToolActionDefinition = {
             const result = await withRetry(async () => {
                 const raw = encodeEmail(to, subject, body, cc, bcc, replyTo);
                 console.log('🌐 [Gmail] Calling Gmail API: POST /messages/send');
-                return gmailApiFetch('messages/send', {
-                    method: 'POST',
-                    body: JSON.stringify({ raw })
-                });
+                return gmailCall<{ id: string }>('gmail_send_message', { raw });
             });
 
             // Step 5: Success
@@ -429,49 +385,31 @@ const readInboxAction: ToolActionDefinition = {
 
         try {
             const listResult = await withRetry(() =>
-                gmailApiFetch(
-                    `messages?maxResults=${maxResults}${query ? `&q=${encodeURIComponent(query)}` : ''}`
-                )
-            );
-
-            if (!listResult.messages || listResult.messages.length === 0) {
-                return {
-                    emails: JSON.stringify([]),
-                    email_count: '0'
-                };
-            }
-
-            const emailDetails = await Promise.all(
-                listResult.messages.slice(0, maxResults).map(async (msg: { id: string }) => {
-                    const detail = await gmailApiFetch(
-                        `messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`
-                    );
-                    const headers = detail.payload?.headers || [];
-                    const getHeader = (name: string) =>
-                        headers.find((h: any) => h.name === name)?.value || '';
-
-                    return {
-                        id: detail.id,
-                        subject: getHeader('Subject'),
-                        from: getHeader('From'),
-                        date: getHeader('Date'),
-                        snippet: detail.snippet || ''
-                    };
+                gmailCall<{ messages: Array<{ id: string }> }>('gmail_list_messages', {
+                    maxResults,
+                    query
                 })
             );
 
-            return {
-                emails: JSON.stringify(emailDetails),
-                email_count: String(emailDetails.length)
-            };
-        } catch (err) {
-            if (err instanceof GmailApiError && err.errorType === 'auth') {
-                return { emails: '[]', email_count: 'Error: Gmail auth expired. Reconnect.' };
+            if (!listResult.messages || listResult.messages.length === 0) {
+                return { emails: [], email_count: 0 };
             }
-            return {
-                emails: `Error: ${err instanceof Error ? err.message : String(err)}`,
-                email_count: '0'
-            };
+
+            // The proxy already reduces each message to the header fields this
+            // product shows, so there is no payload walking to do here.
+            const emailDetails = await Promise.all(
+                listResult.messages
+                    .slice(0, maxResults)
+                    .map((msg: { id: string }) => gmailCall('gmail_get_message', { id: msg.id }))
+            );
+
+            return { emails: emailDetails, email_count: emailDetails.length };
+        } catch (err) {
+            // Report through `error`, the channel the engine reads. This used to
+            // return the message inside `emails` / `email_count`, so a failure
+            // arrived downstream as if it were inbox content.
+            const message = err instanceof Error ? err.message : String(err);
+            return { emails: [], email_count: 0, error: message };
         }
     }
 };
@@ -560,18 +498,6 @@ const composeAndSendAction: ToolActionDefinition = {
 
 // ==================== GMAIL TOOL DEFINITION ====================
 
-declare global {
-    interface Window {
-        google?: {
-            accounts: {
-                oauth2: {
-                    initTokenClient: (config: any) => any;
-                };
-            };
-        };
-    }
-}
-
 const gmailTool: ToolDefinition = {
     id: GMAIL_TOOL_ID,
     name: 'Gmail',
@@ -585,61 +511,22 @@ const gmailTool: ToolDefinition = {
 
     isAuthenticated: () => isGmailAvailable(),
 
-    authenticate: () => {
-        return new Promise<void>((resolve, reject) => {
-            const clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-                (typeof process !== 'undefined' && (process as any).env?.GOOGLE_CLIENT_ID);
-
-            if (!clientId) {
-                reject(new Error('VITE_GOOGLE_CLIENT_ID not set in .env.local'));
-                return;
-            }
-
-            if (!window.google?.accounts?.oauth2) {
-                reject(new Error('Google Identity Services not loaded. Check that the GIS script is in index.html.'));
-                return;
-            }
-
-            clearToolAuth(GMAIL_TOOL_ID);
-
-            const tokenClient = window.google.accounts.oauth2.initTokenClient({
-                client_id: clientId,
-                scope: GMAIL_SCOPES.join(' '),
-                prompt: '',
-                callback: (response: any) => {
-                    if (response.error) {
-                        reject(new Error(response.error));
-                        return;
-                    }
-
-                    const expiresAt = Date.now() + (response.expires_in * 1000);
-                    const auth: ToolAuth = {
-                        toolId: GMAIL_TOOL_ID,
-                        accessToken: response.access_token,
-                        expiresAt,
-                        scopes: GMAIL_SCOPES
-                    };
-
-                    console.log(`💾 [Gmail Auth] Saving token - ExpiresIn: ${response.expires_in}s, ExpiresAt: ${expiresAt}, Now: ${Date.now()}`);
-                    saveToolAuth(auth);
-                    console.log(`✅ [Gmail Auth] Token saved successfully`);
-                    resolve();
-                }
-            });
-
-            tokenClient.requestAccessToken();
-        });
-    },
+    /**
+     * Open the server-driven consent flow.
+     *
+     * This used to run the Google Identity Services *token* client in the page,
+     * which returns an access token straight to JavaScript and issues no refresh
+     * token. The server now runs the authorization-code flow with PKCE, keeps the
+     * client secret and the refresh token, and this only learns whether it worked.
+     */
+    authenticate: () => connectTool(GMAIL_TOOL_ID),
 
     disconnect: () => {
-        const auth = getStoredAuth();
-        if (auth?.accessToken) {
-            // Revoke the token with Google (best effort)
-            fetch(`https://oauth2.googleapis.com/revoke?token=${auth.accessToken}`, {
-                method: 'POST'
-            }).catch(() => { /* best effort */ });
-        }
-        clearToolAuth(GMAIL_TOOL_ID);
+        // Revocation happens server side, with the token in the request BODY.
+        // The browser used to put it in a query string, where it lands in logs.
+        void disconnectTool(GMAIL_TOOL_ID).catch((err: GoogleCallError) =>
+            console.warn(`[${GMAIL_TOOL_ID}] disconnect failed:`, err.message)
+        );
     }
 };
 

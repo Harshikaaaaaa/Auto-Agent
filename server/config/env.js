@@ -152,6 +152,27 @@ const schema = z
     /** Redirect hops allowed. Every hop is re-validated against the SSRF policy. */
     FETCH_MAX_REDIRECTS: intWithDefault(5, { min: 0, max: 10 }),
 
+    // ---- Connected-tool OAuth (Google). Server-side only. ----
+    /**
+     * Encrypts stored OAuth tokens at rest, so a database dump does not contain
+     * usable Google credentials. Rotating it makes every stored connection
+     * undecryptable, which means every tool must be reconnected.
+     */
+    CREDENTIAL_SECRET: optionalSecret(),
+    GOOGLE_CLIENT_ID: optionalSecret(),
+    /**
+     * Required for the authorization-code flow. The browser never sees it — that
+     * is the difference between this and the implicit flow it replaces, and it is
+     * what makes a refresh token possible.
+     */
+    GOOGLE_CLIENT_SECRET: optionalSecret(),
+    /** Must match a redirect URI registered on the Google OAuth client exactly. */
+    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+    /** Longest a single proxied Google API call may take. */
+    GOOGLE_API_TIMEOUT_MS: intWithDefault(30_000, { min: 1_000, max: 120_000 }),
+    /** Budget for proxied Google calls, per IP per window. */
+    RATE_LIMIT_GOOGLE_MAX: intWithDefault(120, { min: 1, max: 10_000 }),
+
     // ---- Feature flags ----
     /** WhatsApp bridge is opt-in; see Task 17. */
     WHATSAPP_ENABLED: booleanish(false),
@@ -244,6 +265,64 @@ const schema = z
         message:
           `DB_SSL must be enabled in production when DB_HOST ("${cfg.DB_HOST}") is not local, ` +
           'otherwise database traffic is unencrypted.',
+      });
+    }
+
+    // Google OAuth is optional — a deployment that never connects Gmail, Sheets
+    // or Drive needs none of it. But a PARTIAL configuration is a trap: the
+    // connect button would appear and then fail at the token exchange, so all
+    // three are required together.
+    const googleParts = {
+      GOOGLE_CLIENT_ID: cfg.GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET: cfg.GOOGLE_CLIENT_SECRET,
+      GOOGLE_OAUTH_REDIRECT_URI: cfg.GOOGLE_OAUTH_REDIRECT_URI,
+    };
+    const providedGoogle = Object.entries(googleParts).filter(([, value]) => Boolean(value));
+    if (providedGoogle.length > 0 && providedGoogle.length < 3) {
+      const missing = Object.entries(googleParts)
+        .filter(([, value]) => !value)
+        .map(([name]) => name);
+      ctx.addIssue({
+        code: 'custom',
+        path: [missing[0]],
+        message:
+          `Google OAuth is partially configured. Also set: ${missing.join(', ')}. ` +
+          'Leave all three unset to disable connecting Google tools.',
+      });
+    }
+
+    // Tokens are encrypted at rest, so storing any requires the key.
+    if (providedGoogle.length === 3) {
+      if (!cfg.CREDENTIAL_SECRET) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['CREDENTIAL_SECRET'],
+          message:
+            'CREDENTIAL_SECRET is required when Google OAuth is configured: stored tokens are ' +
+            'encrypted at rest. Generate one with: ' +
+            'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+        });
+      } else if (cfg.CREDENTIAL_SECRET.length < 32) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['CREDENTIAL_SECRET'],
+          message: 'CREDENTIAL_SECRET must be at least 32 characters of high-entropy material.',
+        });
+      }
+    }
+
+    // An OAuth redirect over plain HTTP would expose the authorization code.
+    if (
+      cfg.NODE_ENV === 'production' &&
+      cfg.GOOGLE_OAUTH_REDIRECT_URI &&
+      !cfg.GOOGLE_OAUTH_REDIRECT_URI.startsWith('https://')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GOOGLE_OAUTH_REDIRECT_URI'],
+        message:
+          'GOOGLE_OAUTH_REDIRECT_URI must use https in production: the authorization code ' +
+          'arrives in the query string of this URL.',
       });
     }
   })

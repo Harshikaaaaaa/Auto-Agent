@@ -64,15 +64,19 @@ export function buildHelmet() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        // Google Identity Services is loaded from Google's CDN for OAuth.
-        scriptSrc: ["'self'", 'https://accounts.google.com', 'https://apis.google.com'],
+        // No Google origins here any more. The Google Identity Services script
+        // used to be loaded into the page to run OAuth in the browser; Task 13
+        // moved the whole flow to the server, so the page loads no third-party
+        // script and makes no cross-origin request to Google. Consent happens in
+        // a top-level popup, which CSP does not govern.
+        scriptSrc: ["'self'"],
         // Task 15 removes the remaining CDN styles/fonts; until then they are
         // required for the page to render at all.
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://cdn.jsdelivr.net'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-        connectSrc: ["'self'", 'https://accounts.google.com', 'https://www.googleapis.com'],
-        frameSrc: ["'self'", 'https://accounts.google.com'],
+        connectSrc: ["'self'"],
+        frameSrc: ["'self'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
@@ -146,6 +150,11 @@ export function buildLimiters() {
     send: buildLimiter({ limit: env.RATE_LIMIT_SEND_MAX, name: 'send' }),
     /** Budget for outbound fetches, to cap use as a scanner or scraper. */
     fetch: buildLimiter({ limit: env.RATE_LIMIT_FETCH_MAX, name: 'fetch' }),
+    /**
+     * Budget for proxied Google calls. Separate from `general` because these
+     * spend the operator's own API quota and can send mail.
+     */
+    google: buildLimiter({ limit: env.RATE_LIMIT_GOOGLE_MAX, name: 'google' }),
   };
 }
 

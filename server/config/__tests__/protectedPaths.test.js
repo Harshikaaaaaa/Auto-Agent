@@ -59,6 +59,8 @@ describe('protected paths', () => {
       'ai/routes.js',
       'auth/session.js',
       'fetch/routes.js',
+      'oauth/routes.js',
+      'google/routes.js',
     ];
     const registered = new Set();
 
@@ -76,6 +78,9 @@ describe('protected paths', () => {
     // Sanity check that the scan found the real routes rather than nothing.
     expect(registered.has('/api/workflows')).toBe(true);
     expect(registered.has('/api/ai/plan')).toBe(true);
+    // The OAuth callback WRITES a credential, so it must be covered too.
+    expect(registered.has('/api/oauth/google/callback')).toBe(true);
+    expect(registered.has('/api/google/call')).toBe(true);
     expect(registered.size).toBeGreaterThan(8);
 
     const unguarded = [...registered].filter((route) => {

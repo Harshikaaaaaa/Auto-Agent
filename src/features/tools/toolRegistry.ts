@@ -7,8 +7,7 @@ import {
     ToolAction,
     ToolActionDefinition,
     ToolDefinition,
-    ToolStatus,
-    ToolAuth
+    ToolStatus
 } from './types';
 
 // ==================== TOOL REGISTRY ====================
@@ -387,122 +386,38 @@ export function getToolStatuses(): ToolStatus[] {
     }));
 }
 
-// ==================== TOKEN PERSISTENCE ====================
-
-const STORAGE_PREFIX = 'tool_auth_';
-
-/** Save a tool's auth token to localStorage */
-export function saveToolAuth(auth: ToolAuth): void {
-    if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.setItem(STORAGE_PREFIX + auth.toolId, JSON.stringify(auth));
-    }
-}
+// ==================== CONNECTION STATE ====================
 
 /**
- * Load a tool's auth token from localStorage.
- * Returns the stored auth even if it is expired — callers decide what to do.
- * The `expired` field is set to true when the token has passed its expiresAt.
+ * Which tools the SERVER says are connected.
+ *
+ * There is no token here, and no localStorage. Until Task 13 this module owned a
+ * `tool_auth_<id>` localStorage store holding raw Google access tokens in plain
+ * text, a GIS silent-refresh helper, and a five-minute `setInterval` that
+ * re-requested consent in the background. All of it is gone: the server holds the
+ * credential, refreshes it with a refresh token, and exposes only the fact of a
+ * connection.
+ *
+ * A cached snapshot is kept because `Tool.isAuthenticated()` is synchronous and is
+ * called from `describeCatalog()` and `getToolStatuses()` during render. It is
+ * refreshed by `useTools` from `/api/oauth/connections`; a stale snapshot only
+ * ever means the UI shows a connect prompt a moment late, because the server
+ * checks the credential again on every call it makes.
  */
-export function loadToolAuth(toolId: string): (ToolAuth & { expired?: boolean }) | null {
-    if (typeof window === 'undefined' || !window.localStorage) return null;
-    const raw = localStorage.getItem(STORAGE_PREFIX + toolId);
-    if (!raw) return null;
+const connectedToolIds = new Set<string>();
 
-    try {
-        const auth = JSON.parse(raw) as ToolAuth;
-        // Don't delete expired tokens — just flag them so connectors can try to refresh
-        if (auth.expiresAt < Date.now()) {
-            return { ...auth, expired: true };
-        }
-        return auth;
-    } catch {
-        return null;
-    }
+/** Replace the snapshot. Called with the server's answer, nothing else. */
+export function setConnectedTools(toolIds: readonly string[]): void {
+    connectedToolIds.clear();
+    for (const id of toolIds) connectedToolIds.add(id);
 }
 
-/** Remove a tool's auth token from localStorage */
-export function clearToolAuth(toolId: string): void {
-    if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.removeItem(STORAGE_PREFIX + toolId);
-    }
+/** Whether the server reported this tool as connected. */
+export function isToolConnected(toolId: string): boolean {
+    return connectedToolIds.has(toolId);
 }
 
-// ==================== SILENT TOKEN REFRESH ====================
-
-/**
- * Attempt a silent token refresh for a Google OAuth-based tool.
- * Uses GIS `requestAccessToken({ prompt: '' })` for a non-interactive refresh.
- * Returns true if successful.
- */
-export function silentRefreshGoogleToken(toolId: string, scopes: string[]): Promise<boolean> {
-    return new Promise((resolve) => {
-        try {
-            const google = (window as any).google;
-            if (!google?.accounts?.oauth2) {
-                resolve(false);
-                return;
-            }
-
-            const clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-                (typeof process !== 'undefined' && (process as any).env?.GOOGLE_CLIENT_ID);
-            if (!clientId) { resolve(false); return; }
-
-            const client = google.accounts.oauth2.initTokenClient({
-                client_id: clientId,
-                scope: scopes.join(' '),
-                prompt: '',
-                callback: (response: any) => {
-                    if (response.error) {
-                        console.warn(`⚠️ [${toolId}] Silent refresh failed:`, response.error);
-                        resolve(false);
-                        return;
-                    }
-                    const auth: ToolAuth = {
-                        toolId,
-                        accessToken: response.access_token,
-                        expiresAt: Date.now() + (response.expires_in * 1000),
-                        scopes
-                    };
-                    saveToolAuth(auth);
-                    console.log(`🔄 [${toolId}] Token silently refreshed — expires in ${response.expires_in}s`);
-                    resolve(true);
-                }
-            });
-            client.requestAccessToken();
-        } catch {
-            resolve(false);
-        }
-    });
-}
-
-// ==================== PROACTIVE REFRESH TIMER ====================
-
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // check every 5 minutes
-const REFRESH_BUFFER_MS = 5 * 60 * 1000;   // refresh if <5 min left
-
-let refreshTimerStarted = false;
-
-/**
- * Start a background timer that proactively refreshes Google tokens
- * before they expire. Called once at app init.
- */
-export function startTokenRefreshTimer(): void {
-    if (refreshTimerStarted) return;
-    refreshTimerStarted = true;
-
-    setInterval(() => {
-        for (const tool of getAllTools()) {
-            const auth = loadToolAuth(tool.id);
-            if (!auth) continue;
-
-            const timeLeft = auth.expiresAt - Date.now();
-            // If token is expired or about to expire in < 5 min, try silent refresh
-            if (timeLeft < REFRESH_BUFFER_MS && tool.scopes.length > 0) {
-                console.log(`⏰ [${tool.id}] Token expiring in ${Math.round(timeLeft / 1000)}s — attempting refresh`);
-                silentRefreshGoogleToken(tool.id, tool.scopes);
-            }
-        }
-    }, REFRESH_INTERVAL_MS);
-
-    console.log('🔁 Token refresh timer started (checking every 5 min)');
+/** For tests, and for sign-out. */
+export function clearConnectedTools(): void {
+    connectedToolIds.clear();
 }

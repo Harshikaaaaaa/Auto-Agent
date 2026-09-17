@@ -30,6 +30,16 @@ export const WHATSAPP_PATHS = ['/status', '/qr', '/send', '/messages', '/disconn
 export const FETCH_PATHS = ['/api/fetch'];
 
 /**
+ * Connected-tool OAuth, and the proxy that calls Google with the stored token.
+ *
+ * These MUST be session-gated. `/api/oauth/*` binds a Google grant to whoever is
+ * signed in, and `/api/google/call` spends that grant — anonymous access would
+ * let a stranger send mail from the operator's account. The OAuth callback is
+ * included: it is the request that writes the credential.
+ */
+export const CONNECTOR_PATHS = ['/api/oauth', '/api/google'];
+
+/**
  * Paths that must stay reachable without a session.
  * Health probes need to work before anyone signs in, and the auth endpoints are
  * how a session is obtained in the first place.
@@ -48,4 +58,5 @@ export const ALL_PROTECTED_PATHS = [
   ...WORKFLOW_PATHS,
   ...WHATSAPP_PATHS,
   ...FETCH_PATHS,
+  ...CONNECTOR_PATHS,
 ];

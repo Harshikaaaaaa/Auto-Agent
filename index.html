@@ -5,7 +5,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoAgent Studio</title>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!--
+    The Google Identity Services script used to be loaded here so the browser
+    could run OAuth and receive an access token directly. The whole flow moved to
+    the server in Task 13: the page no longer holds tokens, so it no longer needs
+    Google's script. (The Tailwind CDN below is Task 15's to remove.)
+  -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {

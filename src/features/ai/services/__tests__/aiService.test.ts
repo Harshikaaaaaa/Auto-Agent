@@ -161,6 +161,43 @@ describe('executeNodeAction', () => {
     expect(sent).not.toContain('truncated');
   });
 
+  it('chunks and combines when the MODEL rejects the input for context length', async () => {
+    // The one limit we cannot remove is the model's context window. When the
+    // provider rejects the whole input, the node must split it, summarize each
+    // chunk, and combine — not fail.
+    const big = 'sentence one. '.repeat(2000); // large enough to split meaningfully
+    let call = 0;
+    mockRequest.mockReset();
+    mockRequest.mockImplementation(async (req: { inputState?: Record<string, unknown> }) => {
+      call += 1;
+      const text = String(req.inputState?.extracted_text ?? '');
+      // First call = the whole input: the model rejects it for context length.
+      if (call === 1 && text.length > 5_000) {
+        throw new AiRequestError('This endpoint maximum context length is 131072 tokens.', {
+          status: 400,
+          provider: 'openrouter',
+        });
+      }
+      // Chunk calls and the combine call succeed.
+      return {
+        output: { summary: `partial-${call}` },
+        meta: { provider: 'openrouter', model: 'test', attempts: 1 },
+      };
+    });
+
+    const output = await executeNodeAction(
+      'Summarize Content',
+      'Summarize.',
+      { extracted_text: big },
+      ['summary'],
+    );
+
+    // It recovered: a summary came back rather than a thrown failure, and more
+    // than one request was made (the chunks + the combine pass).
+    expect(output).toHaveProperty('summary');
+    expect(call).toBeGreaterThan(1);
+  });
+
   it('passes the context buffer through so a node sees earlier results', async () => {
     await executeNodeAction('Step', '', {}, ['out'], {
       originalPrompt: 'do it',

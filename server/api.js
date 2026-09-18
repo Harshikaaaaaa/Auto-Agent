@@ -43,7 +43,10 @@ app.use(buildRequestLogger());
 app.use(buildHelmet());
 app.use(buildCors());
 app.use(cookieParser());
-app.use(express.json({ limit: '1mb' }));
+// Large body limit so a workflow can hand a whole scraped page to an AI node
+// without the app rejecting it as "too large"; only the AI provider's own token
+// limit remains. Configurable via JSON_BODY_LIMIT.
+app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
 
 // ---- Public endpoints (no session required) ----
 

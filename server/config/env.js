@@ -177,6 +177,15 @@ const schema = z
     /** Redirect hops allowed. Every hop is re-validated against the SSRF policy. */
     FETCH_MAX_REDIRECTS: intWithDefault(5, { min: 0, max: 10 }),
 
+    /**
+     * Max JSON request body the API accepts, as an express/bytes size string
+     * (e.g. "50mb"). Large so a workflow can pass a whole scraped page to an AI
+     * node without the app rejecting it as "too large" — the only real ceiling
+     * left is the AI provider's own token limit. Raise if you routinely process
+     * bigger documents.
+     */
+    JSON_BODY_LIMIT: z.string().min(2).default('50mb'),
+
     // ---- JavaScript rendering (tier-2 headless-browser fetch) ----
     /**
      * Render JavaScript-heavy pages with a headless browser when the plain

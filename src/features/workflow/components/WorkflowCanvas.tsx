@@ -74,6 +74,7 @@ import {
 import { NodeType } from '@/shared/types';
 import {
   useWorkflowExecution,
+  cachedNodeOutput,
   type RunSummary,
 } from '@features/workflow/hooks/useWorkflowExecution';
 import type { ExecutionLog } from '@features/workflow/types';
@@ -2959,16 +2960,16 @@ export function WorkflowCanvas() {
                               </span>
                               <span className="mt-1 block text-[10px] leading-4 text-white/40">
                                 Skip the AI call and replay this node&rsquo;s last result.
-                                {selectedNode.data.cachedOutput
-                                  ? ' A cached result is available.'
-                                  : ' Run once first to create a cache.'}
+                                {cachedNodeOutput(selectedNode.data)
+                                  ? ' A saved result is available.'
+                                  : ' Run once first to create one.'}
                               </span>
                             </span>
                             <button
                               type="button"
                               role="switch"
                               aria-checked={Boolean(selectedNode.data.useCachedOutput)}
-                              disabled={!selectedNode.data.cachedOutput}
+                              disabled={!cachedNodeOutput(selectedNode.data)}
                               onClick={() =>
                                 setNodes((nds) =>
                                   nds.map((n) =>

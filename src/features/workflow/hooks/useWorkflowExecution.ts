@@ -121,6 +121,35 @@ function evaluateCondition(condition: string | undefined, state: Record<string, 
 }
 
 /**
+ * The replayable cached output of an AI/generic node, or null when there is
+ * none. Prefers the structured `cachedOutput`; falls back to parsing the
+ * existing "Last Output" (`data.output`, a JSON string), so a node that ran
+ * BEFORE the caching feature — but already has a Last Output — can still be
+ * replayed by the "use cached output" toggle.
+ */
+export function cachedNodeOutput(
+  data: { cachedOutput?: unknown; output?: unknown } | undefined | null,
+): Record<string, unknown> | null {
+  if (!data) return null;
+  if (data.cachedOutput && typeof data.cachedOutput === 'object') {
+    return data.cachedOutput as Record<string, unknown>;
+  }
+  if (typeof data.output === 'string' && data.output.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(data.output);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Not JSON (e.g. a plain-text summary): still replayable — wrap it so the
+      // downstream alias resolution can pick it up as the node's result.
+      return { result: data.output };
+    }
+  }
+  return null;
+}
+
+/**
  * Merges a node's output into the graph state using the specified reducer strategy.
  */
 function mergeIntoState(
@@ -585,16 +614,14 @@ export const useWorkflowExecution = (
               nodeOutput[key] = node.data.initialState[key];
             }
           }
-        } else if (
-          node.data.useCachedOutput &&
-          node.data.cachedOutput &&
-          typeof node.data.cachedOutput === 'object'
-        ) {
+        } else if (node.data.useCachedOutput && cachedNodeOutput(node.data) !== null) {
           // "Use cached output" is on and this node has a previous result:
           // replay it instead of calling the AI again. This is for iterating on
           // downstream nodes without paying for (or waiting on) the same AI step
-          // every run. The toggle is set per node in Node Settings.
-          nodeOutput = { ...(node.data.cachedOutput as Record<string, any>) };
+          // every run. Reuses the structured `cachedOutput` when present, and
+          // otherwise the existing "Last Output" (data.output, a JSON string) so
+          // a node that ran BEFORE this feature can still be replayed.
+          nodeOutput = { ...(cachedNodeOutput(node.data) as Record<string, any>) };
         } else if (outputKeys.length > 0) {
           // No tool binding and no initialState — call Gemini AI to process this node
           // Pass the context buffer so AI has full workflow awareness

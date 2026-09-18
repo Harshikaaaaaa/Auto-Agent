@@ -78,4 +78,22 @@ describe('use cached output', () => {
     // Nothing to replay, so it must run for real to create the first cache.
     expect(mockAi).toHaveBeenCalledTimes(1);
   });
+
+  it('replays the existing "Last Output" (data.output) when there is no cachedOutput', async () => {
+    // A node that ran BEFORE the caching feature has only data.output (a JSON
+    // string), not cachedOutput. The toggle must still be able to replay it.
+    await run([
+      aiNode('a', {
+        useCachedOutput: true,
+        output: JSON.stringify({ result: 'FROM LAST OUTPUT' }),
+      }),
+    ]);
+    expect(mockAi).not.toHaveBeenCalled();
+  });
+
+  it('replays a plain-text Last Output as result', async () => {
+    // If Last Output is not JSON, it is still replayable, wrapped as `result`.
+    await run([aiNode('a', { useCachedOutput: true, output: 'a plain summary' })]);
+    expect(mockAi).not.toHaveBeenCalled();
+  });
 });

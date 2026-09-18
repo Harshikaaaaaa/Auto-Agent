@@ -41,6 +41,32 @@ describe('useWorkflowVersions', () => {
     expect(second.result.current.versions[2].label).toBe('v3');
   });
 
+  it('restores (does not wipe) stored versions when the key arrives after mount', () => {
+    // The refresh race: on reload the hook mounts with an undefined key (no task
+    // yet), then the task id arrives. Stored versions must be RESTORED, never
+    // deleted by the save effect firing on the still-empty pre-load state.
+    localStorage.clear();
+    const key = 'task-late';
+    // Seed storage as a prior session would have.
+    const seed = renderHook(({ k }: { k?: string }) => useWorkflowVersions(k), {
+      initialProps: { k: key },
+    });
+    act(() => void seed.result.current.snapshot([node('a')], EDGES, 'seeded'));
+    seed.unmount();
+
+    // Mount with NO key (as on reload), then switch to the real key.
+    const { result, rerender } = renderHook(({ k }: { k?: string }) => useWorkflowVersions(k), {
+      initialProps: { k: undefined as string | undefined },
+    });
+    expect(result.current.versions).toHaveLength(0); // nothing yet
+    act(() => rerender({ k: key }));
+
+    // The seeded version came back — it was not wiped by the empty-state render.
+    expect(result.current.versions.map((v) => v.summary)).toEqual(['seeded']);
+    // And it is still in storage.
+    expect(localStorage.getItem('autoagent_workflow_versions:' + key)).toBeTruthy();
+  });
+
   it('keeps different keys (tasks) isolated', () => {
     localStorage.clear();
     const a = renderHook(() => useWorkflowVersions('task-A'));

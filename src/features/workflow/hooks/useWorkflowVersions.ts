@@ -95,15 +95,17 @@ export function useWorkflowVersions(storageKey?: string) {
     if (!storageKey || typeof localStorage === 'undefined') return;
     // Do not clobber a key's storage during the render before its load runs.
     if (loadedKeyRef.current !== storageKey) return;
+    // NEVER delete on empty. On reload the key changes null -> taskId and this
+    // effect can fire while `versions` is still the pre-load empty array, before
+    // the load effect populates it. Deleting here would wipe the stored history
+    // — the exact "versions gone after refresh" bug. Only ever WRITE, and only
+    // when there is something to write; clearing is an explicit action.
+    if (versions.length === 0) return;
     try {
-      if (versions.length === 0) {
-        localStorage.removeItem(STORAGE_PREFIX + storageKey);
-      } else {
-        localStorage.setItem(
-          STORAGE_PREFIX + storageKey,
-          JSON.stringify({ versions, currentIndex, counter: counter.current }),
-        );
-      }
+      localStorage.setItem(
+        STORAGE_PREFIX + storageKey,
+        JSON.stringify({ versions, currentIndex, counter: counter.current }),
+      );
     } catch {
       // Storage full or unavailable (private mode): versions stay in memory.
     }

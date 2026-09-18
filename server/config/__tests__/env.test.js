@@ -206,6 +206,13 @@ describe('render-tier fetch knobs', () => {
     expect(env.FETCH_RENDER_SETTLE_MS).toBe(1_500);
   });
 
+  it('gives the render tier a larger byte cap than the plain fetch', async () => {
+    const { env } = await loadEnv({ AI_PROVIDER: 'ollama' });
+    // A rendered SPA is much bigger than raw HTML, so its cap must exceed the
+    // plain-fetch cap or every rendered page is rejected as too large.
+    expect(env.FETCH_RENDER_MAX_BYTES).toBeGreaterThan(env.FETCH_MAX_BYTES);
+  });
+
   it('turns rendering on with a booleanish value', async () => {
     const { env } = await loadEnv({ AI_PROVIDER: 'ollama', FETCH_RENDER_ENABLED: 'true' });
     expect(env.FETCH_RENDER_ENABLED).toBe(true);

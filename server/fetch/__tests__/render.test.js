@@ -72,6 +72,8 @@ beforeAll(() => {
     FETCH_RENDER_TIMEOUT_MS: '5000',
     FETCH_RENDER_SETTLE_MS: '0',
     FETCH_MAX_BYTES: '2000000',
+    // Small render cap so the over-cap test does not need a multi-MB fixture.
+    FETCH_RENDER_MAX_BYTES: '4096',
   });
 });
 
@@ -192,6 +194,35 @@ describe('renderFetch re-validates every browser request against the SSRF policy
 
     const internal = routed.find((r) => r.url.includes('10.0.0.5'));
     expect(internal.action).toBe('abort');
+  });
+
+  it('rejects a rendered page over the RENDER byte cap (not the plain-fetch cap)', async () => {
+    routed = [];
+    // 5 KB of rendered HTML — under the 2 MB plain-fetch cap, but over the tiny
+    // 4 KB render cap set for this test, so it must be rejected by the render cap.
+    const big = `<html><body>${'x'.repeat(5000)}</body></html>`;
+    vi.doMock('playwright', () => makeFakePlaywright(big));
+    vi.resetModules();
+    const { renderFetch } = await import('../render.js');
+
+    await expect(
+      renderFetch({ url: `https://${ALLOWED_HOST}/page`, resolveAddresses: resolveForRender }),
+    ).rejects.toMatchObject({ reason: 'response_too_large' });
+  });
+
+  it('accepts a rendered page under the render cap', async () => {
+    routed = [];
+    const ok = `<html><body>${'y'.repeat(1000)}</body></html>`;
+    vi.doMock('playwright', () => makeFakePlaywright(ok));
+    vi.resetModules();
+    const { renderFetch } = await import('../render.js');
+
+    const result = await renderFetch({
+      url: `https://${ALLOWED_HOST}/page`,
+      resolveAddresses: resolveForRender,
+    });
+    expect(result.rendered).toBe(true);
+    expect(result.body).toContain('yyy');
   });
 
   it('refuses a blocked entry URL before launching a page', async () => {

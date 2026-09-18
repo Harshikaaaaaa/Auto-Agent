@@ -193,6 +193,14 @@ const schema = z
      * content has time to appear before we read the DOM.
      */
     FETCH_RENDER_SETTLE_MS: intWithDefault(1_500, { min: 0, max: 30_000 }),
+    /**
+     * Size ceiling for the RENDERED DOM, separate from FETCH_MAX_BYTES. A fully
+     * rendered SPA (all inline styles, hydrated markup, framework runtime) is
+     * routinely several MB even when the readable text is tiny, so the plain
+     * fetch cap is far too small for it. Defaults higher; the extractor throws
+     * away the markup and keeps only the text anyway.
+     */
+    FETCH_RENDER_MAX_BYTES: intWithDefault(10_000_000, { min: 1_024, max: 50_000_000 }),
 
     // ---- Connected-tool OAuth (Google). Server-side only. ----
     /**

@@ -155,11 +155,13 @@ export async function renderFetch({ url: rawUrl, resolveAddresses }) {
     // The rendered DOM as HTML — this is what the existing extractor reads.
     const body = await page.content();
 
-    // Enforce the same size ceiling as tier-1, measured on the rendered output.
+    // Enforce the RENDER cap (larger than the plain-fetch cap): a rendered DOM
+    // is inherently much bigger than raw HTML, and the extractor keeps only the
+    // readable text, so a few MB of markup is expected and fine.
     const bytes = Buffer.byteLength(body, 'utf8');
-    if (bytes > env.FETCH_MAX_BYTES) {
+    if (bytes > env.FETCH_RENDER_MAX_BYTES) {
       throw new BlockedRequestError(
-        `The rendered page is ${bytes} bytes, over the ${env.FETCH_MAX_BYTES} byte limit.`,
+        `The rendered page is ${bytes} bytes, over the ${env.FETCH_RENDER_MAX_BYTES} byte limit.`,
         { reason: 'response_too_large', url: finalUrl },
       );
     }

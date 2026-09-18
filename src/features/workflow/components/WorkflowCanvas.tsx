@@ -3042,6 +3042,38 @@ export function WorkflowCanvas() {
                           </p>
                         </div>
                       )}
+                    {/* Rendering mode for web-fetch nodes. Shows the current
+                        value (so a chat patch is visible here too) and lets it
+                        be changed directly, without the chat. */}
+                    {selectedNode.data.toolId === 'web' && (
+                      <div className="pt-3 border-t border-white/5 space-y-2">
+                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest block">
+                          Rendering
+                        </label>
+                        <p className="text-[10px] leading-4 text-white/40">
+                          How to handle JavaScript-heavy pages. “Always” renders with a headless
+                          browser before extracting; “Auto” only renders when the plain fetch comes
+                          back empty.
+                        </p>
+                        <select
+                          value={(selectedNode.data.render_mode as string) || 'auto'}
+                          onChange={(e) =>
+                            setNodes((nds) =>
+                              nds.map((n) =>
+                                n.id === selectedNodeId
+                                  ? { ...n, data: { ...n.data, render_mode: e.target.value } }
+                                  : n,
+                              ),
+                            )
+                          }
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-bolt-accent/30"
+                        >
+                          <option value="auto">Auto — render only if the page is empty</option>
+                          <option value="always">Always — render every time</option>
+                          <option value="never">Never — plain fetch only</option>
+                        </select>
+                      </div>
+                    )}
                     {selectedNode.data.stateContract && (
                       <div className="pt-3 border-t border-white/5 space-y-3">
                         <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest block">

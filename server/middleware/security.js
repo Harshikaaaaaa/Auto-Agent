@@ -89,6 +89,13 @@ export function buildHelmet() {
         baseUri: ["'self'"],
         formAction: ["'self'"],
         frameAncestors: ["'none'"],
+        // Only force-upgrade subresource requests to HTTPS when we are actually
+        // serving over HTTPS. Helmet adds this directive by default, but over a
+        // plain-HTTP deployment (a local run) it makes the browser request every
+        // asset over https:// — which the server does not speak — so the page
+        // loads with all its JS/CSS blocked. `null` tells Helmet to omit it.
+        // SESSION_COOKIE_SECURE is true exactly when the deployment is HTTPS.
+        upgradeInsecureRequests: env.SESSION_COOKIE_SECURE ? [] : null,
       },
     },
     // The app fetches cross-origin images/fonts, so the strictest COEP would

@@ -311,6 +311,15 @@ describe('security headers', () => {
     expect(headers.get('referrer-policy')).toBe('no-referrer');
   });
 
+  it('does not force HTTPS upgrades when serving over plain HTTP', async () => {
+    // The test app runs without NODE_ENV=production, so SESSION_COOKIE_SECURE is
+    // false — a plain-HTTP (local) deployment. upgrade-insecure-requests here
+    // would make the browser fetch every asset over https:// and blank the page.
+    const { headers } = await req('/healthz');
+    const csp = headers.get('content-security-policy') ?? '';
+    expect(csp).not.toContain('upgrade-insecure-requests');
+  });
+
   it('serves styles and fonts only from our own origin (no CDNs)', async () => {
     // Task 15 bundled Tailwind, the fonts, and react-flow's CSS into the build,
     // so the CSP must not permit any third-party style or font origin. If a CDN

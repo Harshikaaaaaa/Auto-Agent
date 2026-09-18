@@ -71,6 +71,9 @@ services:
       # reach the container even where env_file is ignored (Finch).
       APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      # Leave unset for HTTPS (defaults to secure in production). Set false in
+      # .env for a plain-HTTP local run so cookies and assets are not blocked.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       DB_NAME: ${DB_NAME:-autoagent}
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}

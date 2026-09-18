@@ -32,7 +32,21 @@ const distDir = path.join(projectRoot, 'dist');
  * id is public by design (it is shown in the browser during the OAuth flow).
  */
 const PUBLIC_PREFIXES = ['VITE_'];
-const PUBLIC_NAMES = new Set(['NODE_ENV', 'PORT']);
+// Non-secret identifiers that are safe to appear in the client bundle. Model
+// names and base URLs are public by design — the UI shows the configured model,
+// and AI_PROVIDER is a plain enum. Only credentials are secret; these are not.
+const PUBLIC_NAMES = new Set([
+  'NODE_ENV',
+  'PORT',
+  'AI_PROVIDER',
+  'OPENROUTER_MODEL',
+  'OPENROUTER_BASE_URL',
+  'GEMINI_MODEL',
+  'GEMINI_BASE_URL',
+  'OLLAMA_MODEL',
+  'OLLAMA_BASE_URL',
+  'DB_NAME',
+]);
 
 /** Values shorter than this are too generic to match reliably. */
 const MIN_SECRET_LENGTH = 12;

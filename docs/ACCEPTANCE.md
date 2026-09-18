@@ -56,9 +56,16 @@ re-confirmed live against a running server.
   swallow `/api` or health paths (`server/__tests__/frontend.test.js`).
 - `Dockerfile` (multi-stage) + `docker-compose.yml` (app + MySQL with a named
   volume, health checks, and `depends_on: service_healthy`) + `.dockerignore`.
-  See `docs/DEPLOYMENT.md`. _Docker was not installed on the build host, so the
-  image itself was not built here; the compose/env wiring is validated by parse
-  and by the env unit tests._
+  See `docs/DEPLOYMENT.md`.
+- **Built and run live with Finch** (`finch build`, `finch compose up`): the
+  image builds (frontend compile + in-image secret scan both pass), the stack
+  comes up, and from the host `GET /` returns the app shell, `GET /readyz`
+  reports `database: up` (proving the app↔db link over the private compose
+  network), `GET /api/workflows` without a session is `401` (auth enforced in
+  production mode), and responses carry an `X-Request-Id`. The compose file was
+  made Finch-portable: secrets are passed via `${VAR}` substitution rather than
+  relying on `env_file` (which nerdctl-compose ignores), and empty optional env
+  vars now read as unset so a `${VAR:-}` substitution cannot fail validation.
 - The WhatsApp bridge is off by default and starts only when
   `WHATSAPP_ENABLED=true`; disabled, it emits no Baileys connection noise and
   its endpoints report `disabled`.

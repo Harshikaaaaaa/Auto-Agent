@@ -112,6 +112,18 @@ describe('server env validation', () => {
       expect(env.DB_SSL).toBe(true);
     });
 
+    it('treats an empty GOOGLE_OAUTH_REDIRECT_URI as unset, not an invalid URL', async () => {
+      // Containers and `${VAR:-}` compose substitutions routinely inject an empty
+      // string; that must read as "not set", not fail validation.
+      const { env } = await loadEnv({
+        AI_PROVIDER: 'ollama',
+        GOOGLE_OAUTH_REDIRECT_URI: '',
+        GOOGLE_CLIENT_ID: '',
+        GOOGLE_CLIENT_SECRET: '',
+      });
+      expect(env.GOOGLE_OAUTH_REDIRECT_URI).toBeUndefined();
+    });
+
     it('does not require TLS for a local DB in production', async () => {
       const { env } = await loadEnv({
         NODE_ENV: 'production',

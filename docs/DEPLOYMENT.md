@@ -40,12 +40,21 @@ app and API share a host.
 2. Build and start:
 
    ```bash
-   docker compose up --build
+   docker compose up --build     # Docker
+   # or
+   finch compose up --build      # Finch — same files, no changes needed
    ```
 
-   Compose starts MySQL first, waits until its health check passes, then starts
-   the app. The app runs migrations on boot (`DB_AUTO_MIGRATE=true`) and refuses
-   to start if it cannot reach or prepare the database.
+   Under Docker Compose, MySQL starts first and the app waits on its health
+   check. Finch/nerdctl-compose ignores `depends_on: service_healthy`, so the app
+   may lose one boot race with the database and is restarted automatically
+   (`restart: unless-stopped`) once MySQL is accepting connections — the end
+   state is identical. Either way the app runs migrations on boot
+   (`DB_AUTO_MIGRATE=true`) and refuses to start if it cannot prepare the
+   database.
+
+   Both `docker compose` and `finch compose` read config from `.env` by
+   `${VAR}` substitution, so no Docker-only features are required.
 
 3. Open <http://localhost:3234> and sign in with `APP_PASSWORD`.
 

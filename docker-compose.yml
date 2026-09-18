@@ -1,11 +1,20 @@
 # AutoAgent — single-container app plus a MySQL database.
 #
-# Copy .env.example to .env and fill it in before running. Compose loads .env
-# automatically and passes the variables through to the app via `env_file`.
+# Copy .env.example to .env and fill it in before running. Both the values and
+# the secrets the app needs are pulled from .env by ${VAR} substitution, so this
+# works under Docker Compose and under Finch/nerdctl alike:
 #
-#   docker compose up --build
+#   docker compose up --build        # Docker
+#   finch compose up --build         # Finch
 #
 # The app serves both the UI and the API on http://localhost:3234.
+#
+# NOTE (Finch): nerdctl-compose ignores `env_file`, `healthcheck`, and
+# `depends_on: condition: service_healthy`. The app therefore reads its config
+# from the explicit `environment:` block below (not env_file), and tolerates the
+# database not being ready at first boot — `restart: unless-stopped` brings it up
+# once MySQL is accepting connections. Under Docker Compose all three are honoured
+# and the app waits for the db health check before starting.
 
 services:
   db:
@@ -40,6 +49,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # `env_file` passes the whole .env into the container under Docker Compose.
+    # Finch/nerdctl-compose ignores env_file, so the secrets the app needs are
+    # ALSO listed explicitly below via ${VAR} substitution — which both Compose
+    # and Finch honour from .env. Keep them in sync with .env.example.
     env_file:
       - .env
     environment:
@@ -54,6 +67,23 @@ services:
       # that so the production TLS check does not block startup.
       DB_SSL: 'false'
       DB_TRUST_PRIVATE_NETWORK: 'true'
+      # Secrets and provider config, sourced from .env by substitution so they
+      # reach the container even where env_file is ignored (Finch).
+      APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-autoagent}
+      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      CREDENTIAL_SECRET: ${CREDENTIAL_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - '3234:3234'
     healthcheck:

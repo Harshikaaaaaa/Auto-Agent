@@ -64,6 +64,17 @@ const optionalSecret = () =>
     z.string().min(1).optional(),
   );
 
+/**
+ * An optional URL that treats an empty string as "not set". Same rationale as
+ * optionalSecret: a container that declares `GOOGLE_OAUTH_REDIRECT_URI=` (or a
+ * compose `${VAR:-}` substitution) must read as unset, not as an invalid URL.
+ */
+const optionalUrl = () =>
+  z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().url().optional(),
+  );
+
 const intWithDefault = (defaultValue, { min, max } = {}) =>
   z
     .string()
@@ -181,7 +192,7 @@ const schema = z
      */
     GOOGLE_CLIENT_SECRET: optionalSecret(),
     /** Must match a redirect URI registered on the Google OAuth client exactly. */
-    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+    GOOGLE_OAUTH_REDIRECT_URI: optionalUrl(),
     /** Longest a single proxied Google API call may take. */
     GOOGLE_API_TIMEOUT_MS: intWithDefault(30_000, { min: 1_000, max: 120_000 }),
     /** Budget for proxied Google calls, per IP per window. */

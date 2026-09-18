@@ -11,6 +11,7 @@ import {
 } from '@features/tools/toolRegistry';
 import { evaluateCondition as evaluateSafeCondition } from '@features/workflow/services/safeExpression';
 import { missingExternalInputs } from '@features/workflow/services/externalInputs';
+import { resolveWithAliases } from '@features/workflow/services/stateKeyAliases';
 import {
   MAX_RETRY_ATTEMPTS,
   NodeExecutionError,
@@ -380,11 +381,28 @@ export const useWorkflowExecution = (
       const inputKeys = stateContract.inputKeys || [];
       const outputKeys = stateContract.outputKeys || [];
 
-      // Extract input slice from state (only the keys this node reads)
+      // Build the input this node sees from the shared graph state.
+      //
+      // A TOOL node is bounded to the keys it declares — a connector must not be
+      // fed unexpected fields — but each declared key is resolved WITH ALIASES,
+      // so a producer that wrote a synonym (e.g. `result`/`summary` for a node
+      // that reads `extracted_text`) still connects. This is the permanent,
+      // engine-level replacement for the per-connector `??` fallback chains.
+      //
+      // A generic/AI node (no tool binding) instead receives the WHOLE
+      // accumulated state, so it can consume any upstream output regardless of
+      // the key name the planner happened to assign — the AI prompt already
+      // shows it the full state, so this just makes the structured input match.
+      const isToolNode = Boolean(node.data.toolId && node.data.toolAction);
       const inputState: Record<string, any> = {};
-      for (const key of inputKeys) {
-        if (state[key] !== undefined) {
-          inputState[key] = state[key];
+      if (isToolNode) {
+        for (const key of inputKeys) {
+          const value = resolveWithAliases(state, key);
+          if (value !== undefined) inputState[key] = value;
+        }
+      } else {
+        for (const [key, value] of Object.entries(state)) {
+          if (key !== '__metadata' && value !== undefined) inputState[key] = value;
         }
       }
 
@@ -529,8 +547,11 @@ export const useWorkflowExecution = (
           }
 
           for (const key of action.inputKeys) {
-            if (mergedInput[key] === undefined && state[key] !== undefined) {
-              mergedInput[key] = state[key];
+            if (mergedInput[key] === undefined) {
+              // Resolve with aliases so an action gets its declared input even
+              // when an upstream node wrote a synonymous key name.
+              const value = resolveWithAliases(state, key);
+              if (value !== undefined) mergedInput[key] = value;
             }
           }
 

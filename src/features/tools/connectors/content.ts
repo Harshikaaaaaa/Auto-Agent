@@ -1,6 +1,7 @@
 import { ToolActionDefinition, ToolDefinition } from '../types';
 import { registerTool } from '../toolRegistry';
 import { extractFromHtml, toFileNameStem, toMarkdown } from '../content/htmlExtract';
+import { buildDocxBase64 } from '../content/docx';
 
 const TOOL_ID = 'content';
 
@@ -113,16 +114,61 @@ const formatMarkdown: ToolActionDefinition = {
   },
 };
 
+const formatDocx: ToolActionDefinition = {
+  name: 'to_docx',
+  description:
+    'Convert a title and body text (plain or Markdown) into a Microsoft Word .docx document, ready to download. Use when the user asks for a Word/DOCX file.',
+  capabilities: ['content.format'],
+  sideEffect: 'read',
+  requiresAuth: false,
+  costProfile: { latencyMs: 40, cost: 0, reliability: 9 },
+  inputSchema: {
+    title: { type: 'string', description: 'Document heading.' },
+    extracted_text: {
+      type: 'string',
+      description: 'Body text (plain or Markdown) to put in the document.',
+    },
+  },
+  outputSchema: {
+    // Base64 so the binary .docx travels through the string-typed graph state
+    // and can be handed to the download node, which decodes it.
+    docx_base64: { type: 'string', description: 'The .docx file, base64-encoded.' },
+    file_base64: { type: 'string', description: 'Alias of docx_base64 for the download node.' },
+    suggested_filename: { type: 'string', description: 'A safe .docx file name.' },
+  },
+  execute: async (input) => {
+    const title = String(input.title ?? input.heading ?? '');
+    const text = String(
+      input.extracted_text ?? input.text ?? input.markdown ?? input.summary ?? input.content ?? '',
+    );
+
+    if (!title.trim() && !text.trim()) {
+      return {
+        docx_base64: '',
+        file_base64: '',
+        suggested_filename: '',
+        error: 'There was no content to put in the document.',
+      };
+    }
+
+    const base64 = await buildDocxBase64(title, text);
+    const filename = `${toFileNameStem(title || 'workflow-output')}.docx`;
+    // Expose under both keys so the download node picks it up whether it looks
+    // for docx_base64 or the generic file_base64.
+    return { docx_base64: base64, file_base64: base64, suggested_filename: filename };
+  },
+};
+
 const contentTool: ToolDefinition = {
   id: TOOL_ID,
   name: 'Content',
-  description: 'Extract readable content from HTML and format it as Markdown.',
+  description: 'Extract readable content from HTML and format it as Markdown or a Word .docx.',
   icon: 'FileText',
   color: '#A78BFA',
   category: 'content',
   costProfile: { latencyMs: 20, cost: 0, reliability: 9 },
   scopes: [],
-  actions: [extractContent, formatMarkdown],
+  actions: [extractContent, formatMarkdown, formatDocx],
   // Pure local transforms: nothing to authenticate.
   isAuthenticated: () => true,
   authenticate: async () => {},

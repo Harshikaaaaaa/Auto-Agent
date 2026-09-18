@@ -11,7 +11,20 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   csv: 'text/csv',
   json: 'application/json',
   html: 'text/html',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pdf: 'application/pdf',
 };
+
+/** Extensions delivered as BINARY (their content arrives base64-encoded). */
+const BINARY_EXTENSIONS = new Set(['docx', 'pdf']);
+
+/** Decode a base64 string to bytes, in the browser or a test environment. */
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 /**
  * Force a file name to be a plain name with a known extension.
@@ -51,10 +64,16 @@ const downloadFile: ToolActionDefinition = {
   requiresAuth: false,
   costProfile: { latencyMs: 10, cost: 0, reliability: 10 },
   inputSchema: {
-    content: { type: 'string', description: 'Text to put in the file.', required: true },
+    content: {
+      type: 'string',
+      description:
+        'File content. Plain text for md/txt/csv/json/html, or base64 for a binary file (docx/pdf).',
+      required: true,
+    },
     filename: {
       type: 'string',
-      description: 'Suggested file name. Sanitised, and limited to md, txt, csv, json or html.',
+      description:
+        'Suggested file name. Sanitised, and limited to md, txt, csv, json, html, docx or pdf.',
     },
   },
   outputSchema: {
@@ -63,10 +82,13 @@ const downloadFile: ToolActionDefinition = {
     bytes: { type: 'number', description: 'Size of the file in bytes.' },
   },
   execute: async (input) => {
+    // A binary artifact (docx/pdf) arrives base64-encoded under one of these
+    // keys; a text file arrives as a plain string under content/markdown/etc.
+    const binaryBase64 = input.docx_base64 ?? input.file_base64 ?? input.pdf_base64 ?? undefined;
     const content = input.content ?? input.markdown ?? input.text ?? input.result ?? '';
     const asString = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 
-    if (!asString) {
+    if (!binaryBase64 && !asString) {
       return {
         downloaded: false,
         saved_filename: '',
@@ -75,8 +97,14 @@ const downloadFile: ToolActionDefinition = {
       };
     }
 
-    const fileName = safeFileName(input.filename ?? input.suggested_filename ?? input.title);
-    const bytes = new TextEncoder().encode(asString).length;
+    // Choose the file name (and thus extension) — a base64 payload defaults to
+    // .docx when the name does not already say otherwise.
+    const fileName = safeFileName(
+      input.filename ?? input.suggested_filename ?? input.title,
+      'workflow-output',
+    );
+    const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const isBinary = BINARY_EXTENSIONS.has(extension) || Boolean(binaryBase64);
 
     // A download needs a document to click through. In a non-browser context
     // (server-side rendering, tests) report honestly rather than pretending.
@@ -84,12 +112,21 @@ const downloadFile: ToolActionDefinition = {
       return {
         downloaded: false,
         saved_filename: fileName,
-        bytes,
+        bytes: isBinary && binaryBase64 ? base64ToBytes(String(binaryBase64)).length : 0,
         error: 'A file can only be downloaded from a browser.',
       };
     }
 
-    const blob = new Blob([asString], { type: mimeTypeFor(fileName) });
+    let blob: Blob;
+    let bytes: number;
+    if (isBinary && binaryBase64) {
+      const data = base64ToBytes(String(binaryBase64));
+      bytes = data.length;
+      blob = new Blob([data], { type: mimeTypeFor(fileName) });
+    } else {
+      bytes = new TextEncoder().encode(asString).length;
+      blob = new Blob([asString], { type: mimeTypeFor(fileName) });
+    }
     const objectUrl = URL.createObjectURL(blob);
 
     try {

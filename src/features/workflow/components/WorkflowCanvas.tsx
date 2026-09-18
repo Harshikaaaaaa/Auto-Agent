@@ -491,6 +491,16 @@ export function WorkflowCanvas() {
   const [pendingInputValues, setPendingInputValues] = useState<Record<string, string>>({});
   /** Bumped by the input collector to request a run after the node write flushes. */
   const [runRequestToken, setRunRequestToken] = useState(0);
+  /**
+   * A decision the run needs from the operator, asked IN THE CHAT rather than
+   * through a native window.confirm. Either offer to resume a saved run, or ask
+   * to connect a tool before starting.
+   */
+  const [pendingRunAction, setPendingRunAction] = useState<
+    | { kind: 'resume'; fromFailed: boolean }
+    | { kind: 'auth'; tools: { id: string; name: string }[] }
+    | null
+  >(null);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('autoagent_selected_model');
@@ -607,28 +617,36 @@ export function WorkflowCanvas() {
   const { toolStatuses, authInProgress, authenticate } = useTools();
   const { undo, redo, canUndo, canRedo } = useUndoRedo(nodes, edges, setNodes, setEdges);
 
+  // Offer to resume a saved run — in the CHAT, not a native popup. Fires once
+  // per mount when a resumable checkpoint exists; the operator answers with the
+  // Resume / Start fresh buttons on the card (see pendingRunAction rendering).
+  const checkpointOfferedRef = React.useRef(false);
   useEffect(() => {
+    if (checkpointOfferedRef.current) return;
     try {
-      const runtimeKey = 'autoagent_runtime_checkpoint';
-      const raw = localStorage.getItem(runtimeKey);
+      const raw = localStorage.getItem('autoagent_runtime_checkpoint');
       if (!raw) return;
       const checkpoint = JSON.parse(raw);
       if (!checkpoint || !checkpoint.graphState) return;
       const isResumable = ['running', 'paused', 'failed'].includes(checkpoint.status);
-      if (!isResumable || !nodes.length) return;
+      if (!isResumable || !nodes.length || !activeTaskId) return;
 
-      const shouldResume = window.confirm(
-        `Resume the last saved workflow run from ${checkpoint.status === 'failed' ? 'the failed step' : 'the last checkpoint'}?\n\nThis will continue from the latest runtime state.`,
-      );
-
-      if (shouldResume) {
-        setActiveView('execution');
-        void executeFlow();
-      }
+      checkpointOfferedRef.current = true;
+      setShowChatPanel(true);
+      setPendingRunAction({ kind: 'resume', fromFailed: checkpoint.status === 'failed' });
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text:
+            `There is an unfinished run from ${checkpoint.status === 'failed' ? 'a failed step' : 'earlier'}. ` +
+            `Want me to resume it from where it stopped, or start fresh?`,
+        },
+      ]);
     } catch (err) {
       console.warn('[WorkflowCanvas] Unable to restore execution checkpoint:', err);
     }
-  }, [executeFlow, nodes.length]);
+  }, [nodes.length, activeTaskId, updateActiveTaskMessages]);
 
   // Keyboard shortcuts for undo/redo
   React.useEffect(() => {
@@ -1422,37 +1440,33 @@ export function WorkflowCanvas() {
 
     const validation = validateWorkflowForExecution();
     if (!validation.valid) {
-      alert(validation.message);
+      // Report the problem in the chat instead of a native alert.
+      setShowChatPanel(true);
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `I can't run this yet: ${validation.message}` },
+      ]);
       return;
     }
 
-    // Check if all required tools are authenticated
+    // Any tools that still need connecting? Ask in the chat, not a popup.
     const { allAuthenticated, missingTools } = checkRequiredAuthentication();
-
     if (!allAuthenticated && missingTools.length > 0) {
-      // Show authentication prompt
-      const toolNames = missingTools.map((t) => t.name).join(', ');
-      const shouldProceed = window.confirm(
-        `This workflow requires authentication for: ${toolNames}\n\n` +
-          `Would you like to authenticate now? Click OK to authenticate, Cancel to abort.`,
-      );
-
-      if (!shouldProceed) {
-        return; // User cancelled
-      }
-
-      // Trigger authentication for each missing tool
-      for (const tool of missingTools) {
-        console.log(`[Auth] Authenticating ${tool.name} before execution...`);
-        await authenticate(tool.id);
-      }
-
-      // Re-check after authentication
-      const recheckResult = checkRequiredAuthentication();
-      if (!recheckResult.allAuthenticated) {
-        alert('Authentication failed or was cancelled. Workflow execution aborted.');
-        return;
-      }
+      setShowChatPanel(true);
+      setPendingRunAction({
+        kind: 'auth',
+        tools: missingTools.map((t) => ({ id: t.id, name: t.name })),
+      });
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text:
+            `This workflow uses ${missingTools.map((t) => t.name).join(', ')}, which ${missingTools.length === 1 ? 'is' : 'are'} not connected yet. ` +
+            `Connect ${missingTools.length === 1 ? 'it' : 'them'} below and I'll run it.`,
+        },
+      ]);
+      return;
     }
 
     try {
@@ -1574,7 +1588,7 @@ export function WorkflowCanvas() {
         });
         setRunHistoryReloadKey((k) => k + 1);
       }
-      alert(`Workflow execution failed:\n${errorText}`);
+      // The failure is already reported in the chat above; no native alert.
       setIsTesting(false);
     }
   };
@@ -1595,6 +1609,40 @@ export function WorkflowCanvas() {
       });
     }
   };
+
+  /** Resume a saved run (from the chat card), or start fresh by clearing it. */
+  const resumeSavedRun = useCallback(() => {
+    setPendingRunAction(null);
+    updateActiveTaskMessages((prev) => [...prev, { role: 'user', text: 'Resume the saved run.' }]);
+    setActiveView('execution');
+    setIsTesting(true);
+    void executeFlow();
+  }, [executeFlow, updateActiveTaskMessages]);
+
+  const startFreshRun = useCallback(() => {
+    setPendingRunAction(null);
+    clearLogs(); // clears the saved checkpoint
+    updateActiveTaskMessages((prev) => [
+      ...prev,
+      { role: 'assistant', text: 'Cleared the old run. Click Run Flow when you are ready.' },
+    ]);
+  }, [clearLogs, updateActiveTaskMessages]);
+
+  /** Connect the tools the run needs (from the chat card), then run. */
+  const connectPendingTools = useCallback(async () => {
+    if (pendingRunAction?.kind !== 'auth') return;
+    const tools = pendingRunAction.tools;
+    setPendingRunAction(null);
+    for (const tool of tools) {
+      try {
+        await authenticate(tool.id);
+      } catch (err) {
+        console.error(`[Auth] Could not connect ${tool.name}:`, err);
+      }
+    }
+    // Re-run: the auth gate will pass now, or ask again if a connect failed.
+    setRunRequestToken((token) => token + 1);
+  }, [pendingRunAction, authenticate]);
 
   // Fire the run once the inline input collector's values have been written to
   // the nodes. Keyed on a token (not on nodes) so it runs exactly once per
@@ -2950,6 +2998,75 @@ export function WorkflowCanvas() {
                       onClick={() => {
                         setPendingInputs(null);
                         setPendingInputValues({});
+                        updateActiveTaskMessages((prev) => [
+                          ...prev,
+                          { role: 'assistant', text: 'Okay, I did not run it.' },
+                        ]);
+                      }}
+                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* A run decision asked in the chat instead of a native popup:
+                  resume a saved run, or connect the tools it needs. */}
+              {pendingRunAction?.kind === 'resume' && (
+                <div
+                  data-testid="pending-resume"
+                  className="rounded-2xl border border-blue-400/30 bg-blue-400/10 p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-300">
+                    Unfinished run
+                  </p>
+                  <p className="mt-1 text-[11px] text-white/70">
+                    {pendingRunAction.fromFailed
+                      ? 'A previous run stopped at a failed step.'
+                      : 'A previous run did not finish.'}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={resumeSavedRun}
+                      className="flex items-center gap-1.5 rounded-lg bg-blue-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-blue-300"
+                    >
+                      <Play className="w-3 h-3 fill-black" />
+                      Resume
+                    </button>
+                    <button
+                      onClick={startFreshRun}
+                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                    >
+                      Start fresh
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {pendingRunAction?.kind === 'auth' && (
+                <div
+                  data-testid="pending-auth"
+                  className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-200">
+                    Connect to run
+                  </p>
+                  <ul className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                    {pendingRunAction.tools.map((tool) => (
+                      <li key={tool.id}>{tool.name} — not connected</li>
+                    ))}
+                  </ul>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => void connectPendingTools()}
+                      className="rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-amber-300"
+                    >
+                      Connect &amp; run
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPendingRunAction(null);
                         updateActiveTaskMessages((prev) => [
                           ...prev,
                           { role: 'assistant', text: 'Okay, I did not run it.' },

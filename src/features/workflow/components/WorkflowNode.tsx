@@ -249,6 +249,31 @@ const StateKeyBadges = ({ stateContract }: { stateContract?: NodeData['stateCont
   );
 };
 
+/**
+ * Small badges for configuration a chat patch has set on a node — the values
+ * that are NOT state keys, so they would otherwise be invisible on the card.
+ * This is how a user confirms, at a glance, that "set render_mode = always"
+ * actually landed on the node.
+ */
+const ConfigBadges = ({ data }: { data: any }) => {
+  const badges: string[] = [];
+  if (data.render_mode) badges.push(`render: ${data.render_mode}`);
+  if (badges.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-2">
+      {badges.map((label, idx) => (
+        <span
+          key={`cfg-${idx}`}
+          className="text-[8px] px-1.5 py-0.5 rounded-full font-bold bg-purple-500/15 text-purple-300 border border-purple-500/25"
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+};
+
 const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
   const { isRunning, lastSuccess, type, stateContract } = data;
   const isAgent = type === NodeType.AI_AGENT;
@@ -275,6 +300,7 @@ const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
           )}
         </div>
         <StateKeyBadges stateContract={stateContract} />
+        <ConfigBadges data={data} />
         <Handle
           type="target"
           position={Position.Top}
@@ -305,6 +331,7 @@ const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
           </div>
         </div>
         <StateKeyBadges stateContract={stateContract} />
+        <ConfigBadges data={data} />
         {isRunning && (
           <div className="mt-2 flex items-center gap-2">
             <LucideIcons.Loader2 className="w-3 h-3 animate-spin text-bolt-accent" />

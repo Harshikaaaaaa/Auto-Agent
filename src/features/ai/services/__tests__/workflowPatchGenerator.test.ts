@@ -524,6 +524,19 @@ describe('applying operations', () => {
     expect(updated?.data.toolAction).toBe('append_row');
   });
 
+  it('names the config it set in the applied line, so the change is verifiable', () => {
+    const result = apply(SHEETS_GRAPH, {
+      op: 'updateNodeConfig',
+      nodeId: 'save_sheets',
+      label: null,
+      description: null,
+      config: { render_mode: 'always' },
+    });
+
+    // "Updated X" alone is not enough for a user to confirm; name the value.
+    expect(result.applied.join('\n')).toContain('render_mode = always');
+  });
+
   it('adds an edge once', () => {
     const result = apply(
       SHEETS_GRAPH,

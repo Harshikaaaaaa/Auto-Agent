@@ -737,7 +737,9 @@ export function applyPatch(
               }
             : node,
         );
-        applied.push(`Updated “${operation.label ?? target.data.label}”`);
+        applied.push(
+          `Updated “${operation.label ?? target.data.label}”${summarizeConfig(operation)}`,
+        );
         break;
       }
 
@@ -844,6 +846,21 @@ function labelOf(nodes: WorkflowNode[], id: string): string {
  * than to the word "apply". Node labels are resolved against the current graph
  * because an id like `save_to_sheets_2` means nothing to a reader.
  */
+/**
+ * Spell out the config an updateNodeConfig operation sets, so the confirmation
+ * and the applied line name the actual change — "set render_mode = always" —
+ * rather than a bare "Updated X" the reader cannot verify.
+ */
+function summarizeConfig(operation: Extract<GraphOperation, { op: 'updateNodeConfig' }>): string {
+  const parts: string[] = [];
+  const config = operation.config ?? {};
+  for (const [key, value] of Object.entries(config)) {
+    parts.push(`${key} = ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+  }
+  if (operation.description) parts.push('description updated');
+  return parts.length > 0 ? ` (set ${parts.join(', ')})` : '';
+}
+
 export function describeOperation(operation: GraphOperation, nodes: WorkflowNode[]): string {
   switch (operation.op) {
     case 'addNode':
@@ -857,7 +874,7 @@ export function describeOperation(operation: GraphOperation, nodes: WorkflowNode
         operation.toolId ? ` (${operation.toolId}.${operation.toolAction})` : ''
       }`;
     case 'updateNodeConfig':
-      return `Update “${labelOf(nodes, operation.nodeId)}”`;
+      return `Update “${labelOf(nodes, operation.nodeId)}”${summarizeConfig(operation)}`;
     case 'addEdge':
       return `Connect “${labelOf(nodes, operation.source)}” to “${labelOf(nodes, operation.target)}”`;
     case 'removeEdge':

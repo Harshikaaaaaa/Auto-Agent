@@ -9,6 +9,7 @@ import {
   createPinnedLookup,
   resolveAllowedAddresses,
 } from '../lib/ssrfGuard.js';
+import { looksLikeEmptyShell, renderFetch } from './render.js';
 
 /**
  * Guarded outbound fetch, so workflows can read a web page without the server
@@ -46,6 +47,15 @@ const fetchRequestSchema = z.object({
   headers: z.record(z.string().max(64), z.string().max(1024)).optional().default({}),
   /** Byte ceiling for this request; capped by FETCH_MAX_BYTES regardless. */
   maxBytes: z.number().int().positive().max(20_000_000).optional(),
+  /**
+   * Rendering preference for JavaScript-heavy pages:
+   *   'auto'  (default) — plain fetch first, escalate to the browser only if it
+   *                       comes back an empty shell;
+   *   'always'          — render straight away;
+   *   'never'           — plain fetch only, never render.
+   * Ignored entirely unless FETCH_RENDER_ENABLED is on.
+   */
+  render: z.enum(['auto', 'always', 'never']).optional().default('auto'),
 });
 
 /** Response headers worth returning. The rest is noise or leaks infrastructure. */
@@ -243,6 +253,64 @@ export async function guardedFetch({
   });
 }
 
+/**
+ * Fetch a URL, escalating to the headless-browser render tier when it helps.
+ *
+ * Decision table (only when FETCH_RENDER_ENABLED is on; otherwise always tier-1):
+ *   render='never'  → plain fetch only.
+ *   render='always' → render straight away.
+ *   render='auto'   → plain fetch first; if it returns a JavaScript shell (a
+ *                     client-rendered page with no readable body), re-fetch with
+ *                     the browser and return whichever has real content.
+ *
+ * Returns the same success contract in every branch, so the caller cannot tell
+ * which tier produced it beyond the `rendered` flag on a rendered result.
+ *
+ * `renderImpl` and `resolveAddresses` are injectable for tests.
+ */
+export async function fetchWithOptionalRender(
+  { url, method, headers, maxBytes, render = 'auto' },
+  { renderImpl = renderFetch, resolveAddresses } = {},
+) {
+  const renderEnabled = env.FETCH_RENDER_ENABLED;
+
+  // Render straight away when asked and allowed. HEAD requests never render:
+  // there is no body to build.
+  if (renderEnabled && render === 'always' && method !== 'HEAD') {
+    return renderImpl({ url, resolveAddresses });
+  }
+
+  const plain = await guardedFetch({ url, method, headers, maxBytes, resolveAddresses });
+
+  // Escalate a JavaScript shell to the browser, best-effort: if rendering fails,
+  // fall back to the plain result rather than turning a partial success into a
+  // hard error.
+  const isHtml = String(plain.contentType ?? '')
+    .toLowerCase()
+    .includes('html');
+  if (
+    renderEnabled &&
+    render === 'auto' &&
+    method !== 'HEAD' &&
+    isHtml &&
+    looksLikeEmptyShell(plain.body)
+  ) {
+    try {
+      const rendered = await renderImpl({ url, resolveAddresses });
+      logger.info({ finalUrl: rendered.finalUrl }, 'escalated a JS-shell page to the render tier');
+      return rendered;
+    } catch (err) {
+      logger.warn(
+        { err, url },
+        'render escalation failed; returning the plain-fetch result instead',
+      );
+      return plain;
+    }
+  }
+
+  return plain;
+}
+
 export function setupFetchRoutes(app) {
   app.post('/api/fetch', async (req, res) => {
     const parsed = fetchRequestSchema.safeParse(req.body);
@@ -254,12 +322,17 @@ export function setupFetchRoutes(app) {
       });
     }
 
-    const { url, method, headers, maxBytes } = parsed.data;
+    const { url, method, headers, maxBytes, render } = parsed.data;
 
     try {
-      const result = await guardedFetch({ url, method, headers, maxBytes });
+      const result = await fetchWithOptionalRender({ url, method, headers, maxBytes, render });
       logger.info(
-        { host: new URL(result.finalUrl).host, status: result.status, bytes: result.bytes },
+        {
+          host: new URL(result.finalUrl).host,
+          status: result.status,
+          bytes: result.bytes,
+          rendered: Boolean(result.rendered),
+        },
         'fetched external URL',
       );
       return res.json(result);

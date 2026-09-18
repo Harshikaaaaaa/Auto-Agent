@@ -82,6 +82,9 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      # Tier-2 JavaScript rendering (headless Chromium). Off unless you opt in;
+      # the image bundles Chromium so this can be flipped to true without a rebuild.
+      FETCH_RENDER_ENABLED: ${FETCH_RENDER_ENABLED:-false}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}

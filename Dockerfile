@@ -36,6 +36,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# Tier-2 web scraping renders JavaScript pages with headless Chromium
+# (server/fetch/render.js), used only when FETCH_RENDER_ENABLED=true. Install
+# the browser and its OS libraries here so the toggle works without a rebuild.
+# Browsers go to a world-readable path so the unprivileged `node` user can
+# launch them; the install itself needs root for the apt system libraries.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install --with-deps chromium \
+  && chmod -R a+rx /ms-playwright
+
 # The server, and the frontend built in the previous stage.
 COPY server ./server
 COPY --from=build /app/dist ./dist

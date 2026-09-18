@@ -177,6 +177,23 @@ const schema = z
     /** Redirect hops allowed. Every hop is re-validated against the SSRF policy. */
     FETCH_MAX_REDIRECTS: intWithDefault(5, { min: 0, max: 10 }),
 
+    // ---- JavaScript rendering (tier-2 headless-browser fetch) ----
+    /**
+     * Render JavaScript-heavy pages with a headless browser when the plain
+     * fetch returns an empty shell. OFF by default: it needs Chromium in the
+     * image (~300 MB) and is a bigger attack surface, so an operator opts in.
+     * Every navigation and subresource the browser makes is still re-validated
+     * against the SSRF policy — see server/fetch/render.js.
+     */
+    FETCH_RENDER_ENABLED: booleanish(false),
+    /** Longest a single page render (navigation + settle) may take. */
+    FETCH_RENDER_TIMEOUT_MS: intWithDefault(20_000, { min: 1_000, max: 120_000 }),
+    /**
+     * How long to wait for the network to go idle after load, so client-side
+     * content has time to appear before we read the DOM.
+     */
+    FETCH_RENDER_SETTLE_MS: intWithDefault(1_500, { min: 0, max: 30_000 }),
+
     // ---- Connected-tool OAuth (Google). Server-side only. ----
     /**
      * Encrypts stored OAuth tokens at rest, so a database dump does not contain

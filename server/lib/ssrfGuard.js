@@ -257,6 +257,53 @@ export async function resolveAllowedAddresses(hostname) {
 }
 
 /**
+ * Validate a URL a HEADLESS BROWSER is about to navigate to, or load as a
+ * subresource, against the same policy the HTTP fetch uses.
+ *
+ * Chromium does its own DNS and follows its own redirects and subresource
+ * loads, so `createPinnedLookup` — which protects Node's own `http.request` —
+ * cannot reach it. The render tier must therefore re-check every request the
+ * browser makes itself. This does the full check: URL shape + host gate
+ * (`assertAllowedUrl`) AND real DNS resolution with every resolved address
+ * validated (`resolveAllowedAddresses`), which is what catches a public host
+ * that resolves — or rebinds — to a private address.
+ *
+ * Returns `{ allowed: true }` or `{ allowed: false, reason, message }` instead
+ * of throwing, because a request interceptor wants a cheap decision per request,
+ * not an exception per blocked ad tracker.
+ *
+ * @param {string} rawUrl
+ * @param {(hostname: string) => Promise<Array<{address:string, family:number}>>} [resolveAddresses]
+ * @returns {Promise<{allowed: true} | {allowed: false, reason: string, message: string}>}
+ */
+export async function assertNavigationAllowed(rawUrl, resolveAddresses = resolveAllowedAddresses) {
+  let url;
+  try {
+    url = assertAllowedUrl(rawUrl);
+  } catch (err) {
+    if (err instanceof BlockedRequestError) {
+      return { allowed: false, reason: err.reason, message: err.message };
+    }
+    return { allowed: false, reason: 'invalid_url', message: 'That is not a valid URL.' };
+  }
+
+  try {
+    await resolveAddresses(url.hostname);
+  } catch (err) {
+    if (err instanceof BlockedRequestError) {
+      return { allowed: false, reason: err.reason, message: err.message };
+    }
+    return {
+      allowed: false,
+      reason: 'dns_failure',
+      message: `Could not resolve "${url.hostname}".`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Build a `lookup` implementation for http.request that can only ever return an
  * address from `allowedAddresses`.
  *

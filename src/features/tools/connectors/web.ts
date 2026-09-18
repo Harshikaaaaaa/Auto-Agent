@@ -45,6 +45,11 @@ const fetchPage: ToolActionDefinition = {
       external: true,
       format: 'url',
     },
+    render_mode: {
+      type: 'string',
+      description:
+        "How to handle JavaScript-heavy pages: 'auto' (default) renders with a headless browser only if the plain fetch returns an empty shell; 'always' always renders; 'never' never does. Requires server-side rendering to be enabled.",
+    },
   },
   outputSchema: {
     raw_content: { type: 'string', description: 'Body of the response as text.' },
@@ -69,11 +74,19 @@ const fetchPage: ToolActionDefinition = {
       };
     }
 
+    // Rendering preference is optional and validated server-side; only pass a
+    // recognised value so a stray input cannot make the request invalid.
+    const renderMode = input.render_mode ?? input.render;
+    const render =
+      renderMode === 'always' || renderMode === 'never' || renderMode === 'auto'
+        ? renderMode
+        : undefined;
+
     const response = await fetch(apiUrl('/api/fetch'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ url: target }),
+      body: JSON.stringify({ url: target, ...(render ? { render } : {}) }),
     });
 
     if (!response.ok) {

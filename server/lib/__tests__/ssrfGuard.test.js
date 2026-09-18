@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BlockedRequestError,
   assertAllowedUrl,
+  assertNavigationAllowed,
   createPinnedLookup,
   isBlockedAddress,
 } from '../ssrfGuard.js';
@@ -227,5 +228,56 @@ describe('createPinnedLookup', () => {
 
     expect(seen[0]).toBeInstanceOf(Error);
     expect(seen[0].code).toBe('ENOTFOUND');
+  });
+});
+
+describe('assertNavigationAllowed (the render-tier request guard)', () => {
+  // A resolver that pretends one public host resolves to a public address, and
+  // defers everything else to the real policy — so blocked cases are judged by
+  // the real guard, not a stub.
+  const resolve = async (hostname) => {
+    if (hostname === 'good.example') return [{ address: '93.184.216.34', family: 4 }];
+    const { resolveAllowedAddresses } = await import('../ssrfGuard.js');
+    return resolveAllowedAddresses(hostname);
+  };
+
+  it('allows a well-formed public URL', async () => {
+    const verdict = await assertNavigationAllowed('https://good.example/page', resolve);
+    expect(verdict.allowed).toBe(true);
+  });
+
+  it('blocks the cloud metadata endpoint by literal IP', async () => {
+    const verdict = await assertNavigationAllowed('http://169.254.169.254/latest/meta-data/');
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('address_blocked');
+  });
+
+  it('blocks a private RFC1918 literal address', async () => {
+    const verdict = await assertNavigationAllowed('http://10.0.0.5/internal');
+    expect(verdict.allowed).toBe(false);
+  });
+
+  it('blocks a non-http scheme', async () => {
+    const verdict = await assertNavigationAllowed('file:///etc/passwd');
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('protocol_not_allowed');
+  });
+
+  it('blocks a host that resolves only to a private address (rebinding)', async () => {
+    // The resolver returns a blocked address, so the DNS gate must reject it
+    // even though the URL shape is fine.
+    const rebinding = async () => {
+      const { BlockedRequestError: E } = await import('../ssrfGuard.js');
+      throw new E('resolves only to private addresses', { reason: 'address_blocked' });
+    };
+    const verdict = await assertNavigationAllowed('https://sneaky.example/x', rebinding);
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('address_blocked');
+  });
+
+  it('reports an invalid URL rather than throwing', async () => {
+    const verdict = await assertNavigationAllowed('not a url');
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('invalid_url');
   });
 });

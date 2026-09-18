@@ -2,6 +2,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { setupWorkflowRoutes } from './workflows/routes.js';
 import { setupFetchRoutes } from './fetch/routes.js';
+import { closeRenderBrowser } from './fetch/render.js';
 import { setupOAuthRoutes } from './oauth/routes.js';
 import { setupGoogleRoutes } from './google/routes.js';
 import { setupWhatsAppBridge, setupWhatsAppDisabled } from './whatsapp/bridge.js';
@@ -228,6 +229,12 @@ async function startServer() {
         await closePool();
       } catch (err) {
         logger.error({ err }, 'failed to close the database pool');
+      }
+      try {
+        // Release the headless browser if the render tier ever launched one.
+        await closeRenderBrowser();
+      } catch (err) {
+        logger.error({ err }, 'failed to close the render browser');
       }
       clearTimeout(forceExit);
       process.exit(0);

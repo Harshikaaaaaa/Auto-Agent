@@ -186,3 +186,44 @@ describe('server env validation', () => {
     expect(publicAiConfig().providers.ollama.configured).toBe(true);
   });
 });
+
+describe('render-tier fetch knobs', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+    vi.restoreAllMocks();
+  });
+
+  it('defaults rendering to OFF with sane timeouts', async () => {
+    const { env } = await loadEnv({ AI_PROVIDER: 'ollama' });
+    expect(env.FETCH_RENDER_ENABLED).toBe(false);
+    expect(env.FETCH_RENDER_TIMEOUT_MS).toBe(20_000);
+    expect(env.FETCH_RENDER_SETTLE_MS).toBe(1_500);
+  });
+
+  it('turns rendering on with a booleanish value', async () => {
+    const { env } = await loadEnv({ AI_PROVIDER: 'ollama', FETCH_RENDER_ENABLED: 'true' });
+    expect(env.FETCH_RENDER_ENABLED).toBe(true);
+  });
+
+  it('accepts overridden render timeouts within range', async () => {
+    const { env } = await loadEnv({
+      AI_PROVIDER: 'ollama',
+      FETCH_RENDER_TIMEOUT_MS: '30000',
+      FETCH_RENDER_SETTLE_MS: '3000',
+    });
+    expect(env.FETCH_RENDER_TIMEOUT_MS).toBe(30_000);
+    expect(env.FETCH_RENDER_SETTLE_MS).toBe(3_000);
+  });
+
+  it('rejects a render timeout over the allowed maximum', async () => {
+    await expect(
+      loadEnv({ AI_PROVIDER: 'ollama', FETCH_RENDER_TIMEOUT_MS: '999999' }),
+    ).rejects.toThrow(/Invalid server configuration/);
+  });
+});

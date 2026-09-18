@@ -53,6 +53,25 @@ export function isRetryable(kind: FailureKind): boolean {
   return RETRYABLE.has(kind);
 }
 
+/**
+ * Failure kinds a DIFFERENT user-supplied input value could fix — a URL that is
+ * blocked or 404s, a recipient a provider rejects, an id that does not exist.
+ * A rate_limit or transient failure is not the input's fault, so re-asking for
+ * the value would be wrong; those are retried automatically instead.
+ */
+const INPUT_FAULT: ReadonlySet<FailureKind> = new Set<FailureKind>([
+  'invalid_input',
+  'auth',
+  'permanent',
+  'unsupported',
+]);
+
+export function isInputFault(kind?: FailureKind): boolean {
+  // An unclassified failure is treated as possibly input-related: offering a
+  // retry-with-new-value is a cheap, safe suggestion.
+  return kind === undefined || INPUT_FAULT.has(kind);
+}
+
 /** A node failure, carrying enough to decide what happens next. */
 export class NodeExecutionError extends Error {
   readonly kind: FailureKind;

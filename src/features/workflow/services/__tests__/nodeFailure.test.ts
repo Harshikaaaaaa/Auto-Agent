@@ -9,6 +9,7 @@ import {
   UNSUPPORTED_STEP_PREFIX,
   classifyFailureMessage,
   detectActionFailure,
+  isInputFault,
   isRetryable,
   remedyFor,
   retryDelayMs,
@@ -84,6 +85,45 @@ describe('isRetryable', () => {
   it('gives every kind a remedy the user can act on', () => {
     for (const kind of kinds) {
       expect(remedyFor(kind).length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe('isInputFault', () => {
+  const kinds: FailureKind[] = [
+    'auth',
+    'rate_limit',
+    'invalid_input',
+    'unsupported',
+    'transient',
+    'permanent',
+  ];
+
+  it('treats failures a different input value could fix as input faults', () => {
+    // A blocked/404 URL, a rejected recipient, a missing id, an unsupported
+    // step — all worth re-asking the user for a different value.
+    expect(isInputFault('invalid_input')).toBe(true);
+    expect(isInputFault('auth')).toBe(true);
+    expect(isInputFault('permanent')).toBe(true);
+    expect(isInputFault('unsupported')).toBe(true);
+  });
+
+  it('does not treat throttling or a network hiccup as an input fault', () => {
+    // Re-asking for the URL would not help — these retry automatically.
+    expect(isInputFault('rate_limit')).toBe(false);
+    expect(isInputFault('transient')).toBe(false);
+  });
+
+  it('treats an unclassified failure as possibly input-related', () => {
+    // Offering a retry-with-a-different-value is a cheap, safe suggestion.
+    expect(isInputFault(undefined)).toBe(true);
+  });
+
+  it('never overlaps with the auto-retryable kinds', () => {
+    // A kind is either retried automatically or offered back to the user, so
+    // the run path is unambiguous — never both.
+    for (const kind of kinds) {
+      expect(isInputFault(kind) && isRetryable(kind)).toBe(false);
     }
   });
 });

@@ -68,8 +68,10 @@ import { RunHistoryPanel } from './RunHistoryPanel';
 import {
   inputsToCollect,
   missingRequiredInputs,
+  requiredInputsForRun,
   type RequiredInput,
 } from '@features/workflow/services/externalInputs';
+import { isInputFault } from '@features/workflow/services/nodeFailure';
 import { NodeType } from '@/shared/types';
 import {
   useWorkflowExecution,
@@ -1554,6 +1556,34 @@ export function WorkflowCanvas() {
         ...prev,
         { role: 'assistant', text: buildRunReport(summary) },
       ]);
+
+      // If the run failed for a reason a DIFFERENT input value could fix — a bad
+      // URL, a wrong recipient, an id that 404s — and the workflow actually has
+      // external inputs, offer to try again with new values right here. A
+      // transient/rate-limit failure is not the input's fault, so we don't
+      // re-ask for it in that case.
+      if (summary.status === 'failed') {
+        const failedStep = summary.logs.find((log) => log.status === 'failed');
+        const inputFault = isInputFault(failedStep?.failureKind);
+        const editable = inputsToCollect(nodes as unknown as WorkflowNodeModel[]).length
+          ? inputsToCollect(nodes as unknown as WorkflowNodeModel[])
+          : requiredInputsForRun(nodes as unknown as WorkflowNodeModel[]);
+
+        if (inputFault && editable.length > 0) {
+          setPendingInputs(editable);
+          setPendingInputValues(Object.fromEntries(editable.map((i) => [i.key, i.value])));
+          updateActiveTaskMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              text:
+                `That value may be the problem${failedStep ? ` (${failedStep.node} could not use it)` : ''}. ` +
+                `Want to try again with a different ${editable.map((i) => i.label).join(' / ')}? ` +
+                `Edit ${editable.length === 1 ? 'it' : 'them'} below and I'll re-run.`,
+            },
+          ]);
+        }
+      }
 
       if (activeWorkflowName) {
         const { recordWorkflowRun } = await import('@features/workflow/services/workflowStorage');

@@ -695,7 +695,7 @@ export function WorkflowCanvas() {
     canGoForward: canGoForwardVersion,
     snapshot: snapshotVersion,
     goTo: goToVersion,
-  } = useWorkflowVersions();
+  } = useWorkflowVersions(activeTaskId ?? undefined);
   const [showVersionMenu, setShowVersionMenu] = useState(false);
   /** The version picker shown in the chat footer (distinct from the toolbar one). */
   const [showChatVersions, setShowChatVersions] = useState(false);

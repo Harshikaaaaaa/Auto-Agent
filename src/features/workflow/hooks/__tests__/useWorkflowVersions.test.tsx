@@ -22,6 +22,35 @@ describe('useWorkflowVersions', () => {
     expect(result.current.canGoForward).toBe(false);
   });
 
+  it('persists versions to storage and reloads them for the same key', () => {
+    localStorage.clear();
+    const key = 'task-123';
+
+    // First mount: take two versions under the key.
+    const first = renderHook(() => useWorkflowVersions(key));
+    act(() => void first.result.current.snapshot([node('a')], EDGES, 'first'));
+    act(() => void first.result.current.snapshot([node('a'), node('b')], EDGES, 'second'));
+    first.unmount();
+
+    // Simulate a page reload: a fresh hook with the SAME key restores them.
+    const second = renderHook(() => useWorkflowVersions(key));
+    expect(second.result.current.versions.map((v) => v.summary)).toEqual(['first', 'second']);
+    expect(second.result.current.currentIndex).toBe(1);
+    // The label counter continues, so the next version is v3 (no reuse of v1/v2).
+    act(() => void second.result.current.snapshot([node('c')], EDGES, 'third'));
+    expect(second.result.current.versions[2].label).toBe('v3');
+  });
+
+  it('keeps different keys (tasks) isolated', () => {
+    localStorage.clear();
+    const a = renderHook(() => useWorkflowVersions('task-A'));
+    act(() => void a.result.current.snapshot([node('a')], EDGES, 'A-only'));
+
+    const b = renderHook(() => useWorkflowVersions('task-B'));
+    // Task B has its own (empty) history, not task A's.
+    expect(b.result.current.versions).toHaveLength(0);
+  });
+
   it('labels versions v1, v2, … and makes the newest current', () => {
     const { result } = renderHook(() => useWorkflowVersions());
 

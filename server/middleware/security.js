@@ -33,18 +33,34 @@ const REDACT_PATHS = [
 export function buildCors() {
   const allowed = new Set(env.CORS_ALLOWED_ORIGINS);
 
-  return cors({
-    origin(origin, callback) {
-      // Same-origin requests and non-browser clients (curl, health checks) send
-      // no Origin header. Those are allowed; the session check still applies.
-      if (!origin) return callback(null, true);
-      if (allowed.has(origin)) return callback(null, true);
-      return callback(new CorsOriginError(origin));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Accept'],
-    maxAge: 600,
+  // Delegate form so the decision can see the request, not just the Origin
+  // string — needed to recognise a SAME-origin request and never block it.
+  return cors((req, callback) => {
+    const origin = req.headers.origin;
+    const base = {
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Accept'],
+      maxAge: 600,
+    };
+
+    // Non-browser clients (curl, health checks) send no Origin. Allowed; the
+    // session check still applies.
+    if (!origin) return callback(null, { ...base, origin: true });
+
+    // Same-origin requests are never a CORS threat — CORS exists to guard
+    // against OTHER origins. The browser sends an Origin header even on
+    // same-origin script/module and fetch requests, so an app served on a host
+    // that is not in the allowlist would otherwise block its own assets. Allow
+    // when the Origin matches the host the request came in on.
+    const host = req.headers.host;
+    if (host && (origin === `http://${host}` || origin === `https://${host}`)) {
+      return callback(null, { ...base, origin: true });
+    }
+
+    // Cross-origin: only the configured allowlist.
+    if (allowed.has(origin)) return callback(null, { ...base, origin: true });
+    return callback(new CorsOriginError(origin));
   });
 }
 

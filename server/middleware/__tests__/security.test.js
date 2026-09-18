@@ -292,6 +292,18 @@ describe('CORS', () => {
     expect(status).toBe(200);
   });
 
+  it('never blocks a same-origin request, even when its host is not in the allowlist', async () => {
+    // The app is served on its own host and the browser sends that host as the
+    // Origin on same-origin script/style/fetch requests. Blocking it would 403
+    // the app's own assets and blank the page. The allowlist only governs OTHER
+    // origins. `baseUrl` here is 127.0.0.1:<port>, which is NOT in the allowlist
+    // (only http://localhost:3233 is).
+    const hostOrigin = baseUrl; // e.g. http://127.0.0.1:54321
+    const res = await realFetch(`${baseUrl}/healthz`, { headers: { Origin: hostOrigin } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe(hostOrigin);
+  });
+
   it('never echoes an arbitrary origin back', async () => {
     const { headers } = await req('/healthz', { origin: 'https://evil.example' });
     expect(headers.get('access-control-allow-origin')).not.toBe('https://evil.example');

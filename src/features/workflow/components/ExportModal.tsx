@@ -28,6 +28,28 @@ interface ExportModalProps {
   initialState?: Record<string, any>;
 }
 
+/**
+ * A cheap fingerprint of the graph's exportable shape — node/edge structure and
+ * config, but NOT transient run state. When this changes between exports, the
+ * previously generated code is stale and a "new version" banner is shown.
+ */
+function graphFingerprint(nodes: Node[], edges: Edge[]): string {
+  return JSON.stringify({
+    n: nodes.map((node) => {
+      const data = { ...(node.data as Record<string, unknown>) };
+      delete data.isRunning;
+      delete data.lastSuccess;
+      delete data.output;
+      return { id: node.id, type: node.type, data };
+    }),
+    e: edges.map((edge) => ({
+      s: edge.source,
+      t: edge.target,
+      c: (edge as { condition?: string }).condition,
+    })),
+  });
+}
+
 export const ExportModal: React.FC<ExportModalProps> = ({
   isVisible,
   onClose,
@@ -43,6 +65,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [copiedPip, setCopiedPip] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
+  /** How far "Export All" has progressed, so each framework is shown generating. */
+  const [batchProgress, setBatchProgress] = useState<{ done: number; current: string } | null>(
+    null,
+  );
 
   const exportContext: WorkflowExportContext = useMemo(
     () => ({
@@ -54,6 +80,37 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     }),
     [workflowName, prompt, nodes, edges, initialState],
   );
+
+  /** The graph as it is RIGHT NOW. */
+  const liveFingerprint = useMemo(() => graphFingerprint(nodes, edges), [nodes, edges]);
+
+  /**
+   * The fingerprint the currently-shown code was generated from. Generation is
+   * DEFERRED: code is (re)generated only when the user opens the modal, switches
+   * framework, or clicks Regenerate — not live on every canvas edit — so editing
+   * the workflow does not keep re-running the generators in the background.
+   */
+  const [generatedFingerprint, setGeneratedFingerprint] = useState<string>(liveFingerprint);
+  /** Bumped to force a regenerate of the selected framework on demand. */
+  const [regenToken, setRegenToken] = useState(0);
+
+  // When the modal opens, sync to the current graph so it always shows fresh
+  // code for what is on the canvas at open time.
+  React.useEffect(() => {
+    if (isVisible) setGeneratedFingerprint(liveFingerprint);
+    // Only on open; liveFingerprint intentionally omitted so later edits show
+    // the "new version" banner instead of silently regenerating.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible]);
+
+  /** True when the canvas changed since the shown code was generated. */
+  const isStale = liveFingerprint !== generatedFingerprint;
+
+  /** Re-point generation at the current graph (used by the Regenerate button). */
+  const regenerate = () => {
+    setGeneratedFingerprint(liveFingerprint);
+    setRegenToken((t) => t + 1);
+  };
 
   const filteredApproaches = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -67,9 +124,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     );
   }, [searchQuery]);
 
+  // Generated on demand: keyed on the framework and the GENERATED fingerprint
+  // (plus the regen token), NOT on the live graph — so a canvas edit shows the
+  // "new version" banner rather than silently regenerating in the background.
   const currentExport = useMemo(() => {
     return exportWorkflowCode(selectedApproachId, exportContext);
-  }, [selectedApproachId, exportContext]);
+    // exportContext changes with the live graph, but we only WANT to recompute
+    // when the user acts, so we depend on the generated fingerprint + token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedApproachId, generatedFingerprint, regenToken]);
 
   const handleCopyCode = async () => {
     try {
@@ -99,12 +162,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_');
       const zipFilename = `${safeTitle}_${selectedApproachId}.zip`;
-      await downloadFrameworkZip(
-        selectedApproachId,
-        exportContext,
-        currentExport.code,
-        zipFilename,
-      );
+      // Generate from the CURRENT graph at download time so a downloaded ZIP is
+      // never stale, and re-point the preview at it so the banner clears.
+      const fresh = exportWorkflowCode(selectedApproachId, exportContext);
+      setGeneratedFingerprint(liveFingerprint);
+      await downloadFrameworkZip(selectedApproachId, exportContext, fresh.code, zipFilename);
     } catch (err) {
       console.error('Failed to generate ZIP:', err);
     } finally {
@@ -115,16 +177,24 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleDownloadAll = async () => {
     if (isDownloadingAll) return;
     setIsDownloadingAll(true);
+    // "Export All" always uses the CURRENT graph, and re-points the preview at
+    // it, so a stale banner does not linger after a full export.
+    setGeneratedFingerprint(liveFingerprint);
     try {
       for (let i = 0; i < EXPORT_APPROACHES.length; i++) {
         const approach = EXPORT_APPROACHES[i];
+        // Regenerate each framework one at a time, showing which one, so the
+        // user sees progress instead of a single opaque spinner.
+        setBatchProgress({ done: i, current: approach.name });
         const single = exportWorkflowCode(approach.id, exportContext);
         const safeTitle = (exportContext.title || 'workflow')
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '_');
         const zipFilename = `${safeTitle}_${approach.id}.zip`;
         await downloadFrameworkZip(approach.id, exportContext, single.code, zipFilename);
-        // Small delay to avoid browser blocking multiple downloads
+        setBatchProgress({ done: i + 1, current: approach.name });
+        // Small delay to avoid the browser blocking multiple downloads, and so
+        // each framework's generation is visible rather than instant.
         if (i < EXPORT_APPROACHES.length - 1) {
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
@@ -133,6 +203,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       console.error('Failed to generate ZIPs:', err);
     } finally {
       setIsDownloadingAll(false);
+      setBatchProgress(null);
     }
   };
 
@@ -178,7 +249,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               {isDownloadingAll ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 text-bolt-accent animate-spin" />
-                  Generating ZIPs...
+                  {batchProgress
+                    ? `Generating ${batchProgress.done}/${EXPORT_APPROACHES.length}: ${batchProgress.current}…`
+                    : 'Generating ZIPs...'}
                 </>
               ) : (
                 <>
@@ -256,6 +329,23 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
           {/* Right Panel: Code Preview & Controls */}
           <div className="flex-1 flex flex-col min-w-0 bg-[#0c0c0c] overflow-hidden">
+            {/* New-version banner: the canvas changed since this code was
+                generated. Regeneration is on-demand (not live) to keep editing
+                cheap, so the user decides when to refresh the code. */}
+            {isStale && (
+              <div className="px-5 py-2.5 border-b border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3 shrink-0">
+                <span className="flex items-center gap-2 text-[11px] font-semibold text-amber-200">
+                  <Loader2 className="w-3.5 h-3.5" />
+                  New version detected — the workflow changed since this code was generated.
+                </span>
+                <button
+                  onClick={regenerate}
+                  className="shrink-0 rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-amber-300"
+                >
+                  Regenerate
+                </button>
+              </div>
+            )}
             {/* Approach Details Bar */}
             <div className="p-5 border-b border-white/10 bg-[#0d0d0d] flex flex-col gap-3 shrink-0">
               <div className="flex items-start justify-between gap-4">

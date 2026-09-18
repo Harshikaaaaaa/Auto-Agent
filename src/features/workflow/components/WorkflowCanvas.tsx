@@ -85,6 +85,7 @@ import type {
   Workflow,
   WorkflowEdge,
   WorkflowNode as WorkflowNodeModel,
+  NodeData,
 } from '@features/workflow/types';
 import { validateCondition } from '@features/workflow/services/safeExpression';
 import {
@@ -100,6 +101,7 @@ import { suggestFixes, type FixSuggestion } from '@features/workflow/services/fa
 import {
   currentNodeVersionIndex,
   listNodeVersions,
+  pushNodeVersion,
   restoreNodeVersion,
 } from '@features/workflow/services/nodeVersions';
 // Lazy-loaded so the export machinery — the 10 framework code generators and
@@ -1263,7 +1265,11 @@ export function WorkflowCanvas() {
       const node = formattedNodes[i];
       setGenerationStatuses((prev) => ({ ...prev, [node.id]: 'generating' }));
       await new Promise((resolve) => setTimeout(resolve, 120));
-      setNodes((prev) => [...prev, node as Node]);
+      // Seed v1 = the ORIGINAL node config as it was generated, so the very
+      // first patch adds v2 and the user can always switch back to how the node
+      // started — the "before any change" baseline.
+      const seeded = { ...node, data: pushNodeVersion(node.data as unknown as NodeData) };
+      setNodes((prev) => [...prev, seeded as Node]);
       setGenerationStatuses((prev) => ({ ...prev, [node.id]: 'done' }));
       setPlanStep(i + 1);
     }

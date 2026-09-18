@@ -148,6 +148,28 @@ describe('executeNodeAction', () => {
     });
   });
 
+  it('truncates an oversized input so the request stays under the body limit', async () => {
+    // A scraped article can be hundreds of KB; sending it verbatim exceeds the
+    // server's 1 MB body cap and fails the node. It must be trimmed with a
+    // marker rather than sent whole.
+    const huge = 'x'.repeat(500_000);
+    await executeNodeAction('Summarize Content', 'Summarize.', { extracted_text: huge }, [
+      'summary',
+    ]);
+
+    const sent = String(mockRequest.mock.calls[0][0].inputState?.extracted_text ?? '');
+    expect(sent.length).toBeLessThan(huge.length);
+    expect(sent.length).toBeLessThan(130_000); // trimmed to the cap + a short marker
+    expect(sent).toContain('truncated');
+  });
+
+  it('leaves a small input untouched', async () => {
+    await executeNodeAction('Summarize Content', 'Summarize.', { extracted_text: 'short text' }, [
+      'summary',
+    ]);
+    expect(mockRequest.mock.calls[0][0].inputState?.extracted_text).toBe('short text');
+  });
+
   it('passes the context buffer through so a node sees earlier results', async () => {
     await executeNodeAction('Step', '', {}, ['out'], {
       originalPrompt: 'do it',

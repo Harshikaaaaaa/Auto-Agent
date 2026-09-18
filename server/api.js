@@ -5,6 +5,7 @@ import { setupFetchRoutes } from './fetch/routes.js';
 import { setupOAuthRoutes } from './oauth/routes.js';
 import { setupGoogleRoutes } from './google/routes.js';
 import { setupWhatsAppBridge, setupWhatsAppDisabled } from './whatsapp/bridge.js';
+import { serveFrontend } from './frontend.js';
 import {
   closePool,
   ensureDatabaseExists,
@@ -192,6 +193,12 @@ async function startServer() {
   } else {
     setupWhatsAppDisabled(app, { limiters });
   }
+
+  // Serve the built frontend from this origin (single-container deploy).
+  // Registered after every API and bridge route so real endpoints win over the
+  // SPA history fallback, and before the error handler. A no-op if dist/ is
+  // absent (e.g. the Vite dev server is serving the app instead).
+  serveFrontend(app);
 
   // Terminal error handler. Registered last so it sees errors from every
   // route and from CORS rejections.

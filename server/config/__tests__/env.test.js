@@ -83,6 +83,47 @@ describe('server env validation', () => {
     expect(defaults.WHATSAPP_ENABLED).toBe(false);
   });
 
+  describe('production database TLS (Task 18)', () => {
+    const prodBase = {
+      NODE_ENV: 'production',
+      AI_PROVIDER: 'ollama',
+      DB_PASSWORD: 'a-real-db-password',
+      DB_HOST: 'db', // a non-local host, e.g. a compose service
+    };
+
+    it('requires TLS when the DB host is not local and no trust flag is set', async () => {
+      await expect(loadEnv({ ...prodBase, DB_SSL: 'false' })).rejects.toThrow(
+        /Invalid server configuration/,
+      );
+    });
+
+    it('accepts a private-network DB when DB_TRUST_PRIVATE_NETWORK is set', async () => {
+      const { env } = await loadEnv({
+        ...prodBase,
+        DB_SSL: 'false',
+        DB_TRUST_PRIVATE_NETWORK: 'true',
+      });
+      expect(env.DB_HOST).toBe('db');
+      expect(env.DB_TRUST_PRIVATE_NETWORK).toBe(true);
+    });
+
+    it('accepts a non-local DB when DB_SSL is on, without the trust flag', async () => {
+      const { env } = await loadEnv({ ...prodBase, DB_SSL: 'true' });
+      expect(env.DB_SSL).toBe(true);
+    });
+
+    it('does not require TLS for a local DB in production', async () => {
+      const { env } = await loadEnv({
+        NODE_ENV: 'production',
+        AI_PROVIDER: 'ollama',
+        DB_PASSWORD: 'a-real-db-password',
+        DB_HOST: '127.0.0.1',
+        DB_SSL: 'false',
+      });
+      expect(env.DB_HOST).toBe('127.0.0.1');
+    });
+  });
+
   it('rejects an out-of-range port instead of silently defaulting', async () => {
     await expect(loadEnv({ AI_PROVIDER: 'ollama', PORT: '99999' })).rejects.toThrow(
       /Invalid server configuration/,

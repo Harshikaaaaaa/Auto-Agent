@@ -128,6 +128,15 @@ const schema = z
     DB_CONNECTION_LIMIT: intWithDefault(10, { min: 1, max: 100 }),
     /** Require TLS to the database. Should be on for any non-local database. */
     DB_SSL: booleanish(false),
+    /**
+     * Opt out of the "production DB must use TLS when its host is not local"
+     * check for a database reached only over a trusted private network — the
+     * canonical case being a Docker Compose service on an internal bridge whose
+     * port is never published to the host. This is a deliberate, documented
+     * escape hatch, not a default: leave it false and use DB_SSL for anything
+     * that crosses an untrusted network.
+     */
+    DB_TRUST_PRIVATE_NETWORK: booleanish(false),
     /** Create the schema on boot. Convenient locally; use migrations in prod. */
     DB_AUTO_MIGRATE: booleanish(true),
 
@@ -263,13 +272,20 @@ const schema = z
     // Connecting to a remote database in the clear would put workflow contents
     // on the wire unencrypted.
     const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
-    if (cfg.NODE_ENV === 'production' && !cfg.DB_SSL && !localHosts.has(cfg.DB_HOST)) {
+    if (
+      cfg.NODE_ENV === 'production' &&
+      !cfg.DB_SSL &&
+      !cfg.DB_TRUST_PRIVATE_NETWORK &&
+      !localHosts.has(cfg.DB_HOST)
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['DB_SSL'],
         message:
           `DB_SSL must be enabled in production when DB_HOST ("${cfg.DB_HOST}") is not local, ` +
-          'otherwise database traffic is unencrypted.',
+          'otherwise database traffic is unencrypted. If the database is only reachable over a ' +
+          'trusted private network (e.g. a Docker Compose internal bridge), set ' +
+          'DB_TRUST_PRIVATE_NETWORK=true to acknowledge that instead.',
       });
     }
 

@@ -1,0 +1,73 @@
+# AutoAgent — single-container app plus a MySQL database.
+#
+# Copy .env.example to .env and fill it in before running. Compose loads .env
+# automatically and passes the variables through to the app via `env_file`.
+#
+#   docker compose up --build
+#
+# The app serves both the UI and the API on http://localhost:3234.
+
+services:
+  db:
+    image: mysql:9.4
+    restart: unless-stopped
+    environment:
+      # MYSQL_ROOT_PASSWORD is read from your .env. For a throwaway local stack
+      # you may instead set MYSQL_ALLOW_EMPTY_PASSWORD=yes, but a password is
+      # required once NODE_ENV=production (the app enforces it).
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:-autoagent}
+    volumes:
+      # Named volume so the data survives `docker compose down` (use
+      # `down -v` to wipe it deliberately).
+      - autoagent_db:/var/lib/mysql
+    healthcheck:
+      # The app waits on this: it will not start until the database is healthy.
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${DB_PASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Not published to the host by default; only the app needs to reach it.
+    expose:
+      - '3306'
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override the host bits that must point at the compose network / container,
+      # regardless of what .env says for a local (non-Docker) run.
+      NODE_ENV: production
+      PORT: '3234'
+      DB_HOST: db
+      DB_PORT: '3306'
+      # The DB is reachable only over the private compose network (its port is
+      # not published), so TLS to it is not required. This flag acknowledges
+      # that so the production TLS check does not block startup.
+      DB_SSL: 'false'
+      DB_TRUST_PRIVATE_NETWORK: 'true'
+    ports:
+      - '3234:3234'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3234/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  autoagent_db:

@@ -103,32 +103,21 @@ export function humanizeKey(key: string): string {
 /**
  * The external inputs a run still needs, de-duplicated across the graph.
  *
- * A key is required when some node declares it (via `externalInputKeys`, or its
- * `inputKeys` as a fallback) AND nothing upstream produces it AND it is not a
- * generic model-derived key. A value already present — on the node's data or its
- * `initialState` — clears it. This is the single source of truth shared by the
- * run gate and the chat collector, so they never disagree.
+ * A value is asked for ONLY when it is a real external input of a bound tool
+ * action — i.e. the tool's own schema marks that field `external: true`. That is
+ * the single authoritative signal, and it carries the field's description,
+ * required flag and format. Everything else a node "declares" (raw_content,
+ * extracted_text, content, records, filename, …) is internal state that some
+ * step produces, so the user is never asked for it. A value already present — on
+ * node data or `initialState` — clears the ask.
+ *
+ * Shared by the run gate and the chat collector so they never disagree.
  */
 export function requiredInputsForRun(nodes: WorkflowNode[]): RequiredInput[] {
-  // A key is genuinely PRODUCED only by a node that actually computes it at run
-  // time — a tool/AI/logic step. A trigger node that "outputs" source_url is not
-  // computing anything; it is declaring a value the user must supply. Counting
-  // its outputs as produced is exactly what let a run start with an empty URL.
-  const isTrigger = (node: WorkflowNode) => {
-    const t = String(node.data.type ?? node.type ?? '').toLowerCase();
-    return t.includes('trigger');
-  };
-
-  const producedKeys = new Set<string>();
-  for (const node of nodes) {
-    if (isTrigger(node)) continue;
-    for (const key of node.data.stateContract?.outputKeys ?? []) producedKeys.add(key);
-  }
-
-  // Field metadata (description, required, format) lives on the bound action in
-  // the tool registry, keyed by the input name — collect it from every tool
-  // node so a key surfaced by a trigger can still be explained by the tool that
-  // consumes it (e.g. source_url's description comes from web.fetch_page).
+  // Field metadata (description, required flag, format) for every `external: true`
+  // field of a bound tool action. This is what lets us explain a value and know
+  // whether it is required — but it is NOT the list of what to ask for; that
+  // comes from each node's declared externalInputKeys below.
   const fieldMeta = new Map<string, ExternalInputField>();
   for (const node of nodes) {
     for (const field of getExternalInputFields(node.data.toolId, node.data.toolAction)) {
@@ -136,44 +125,49 @@ export function requiredInputsForRun(nodes: WorkflowNode[]): RequiredInput[] {
     }
   }
 
-  const seen = new Map<string, RequiredInput>();
-  const consider = (node: WorkflowNode, key: string) => {
-    if (producedKeys.has(key) || GENERIC_DERIVED_KEYS.has(key)) return;
-    if (seen.has(key)) return;
-    const existing = externalInputValue(node, key) || String(node.data.initialState?.[key] ?? '');
-    const meta = fieldMeta.get(key);
-    seen.set(key, {
-      key,
-      label: humanizeKey(key),
-      nodeId: node.id,
-      nodeLabel: node.data.label,
-      value: existing,
-      description: meta?.description ?? '',
-      // A trigger-surfaced entry input with no bound field is required by
-      // default (the flow needs it to start); otherwise trust the schema flag.
-      required: meta ? meta.required : true,
-      format: meta?.format,
-    });
+  // Keys a real (non-trigger) step produces are the workflow's own to fill, so
+  // they are never asked of the user. A trigger computes nothing, so its
+  // outputs are NOT counted as produced.
+  const isTrigger = (node: WorkflowNode) => {
+    const t = String(node.data.type ?? node.type ?? '').toLowerCase();
+    return t.includes('trigger');
   };
-
+  const producedKeys = new Set<string>();
   for (const node of nodes) {
-    const contract = node.data.stateContract ?? { inputKeys: [], outputKeys: [] };
+    if (isTrigger(node)) continue;
+    for (const key of node.data.stateContract?.outputKeys ?? []) producedKeys.add(key);
+  }
 
-    // A trigger's declared outputs are the workflow's entry inputs — the user
-    // provides them — so they are required unless something already fills them.
-    if (isTrigger(node)) {
-      for (const key of contract.outputKeys ?? []) consider(node, key);
-      continue;
-    }
-
-    const declared =
-      contract.externalInputKeys && contract.externalInputKeys.length > 0
-        ? contract.externalInputKeys
-        : (contract.inputKeys ?? []);
+  const seen = new Map<string, RequiredInput>();
+  for (const node of nodes) {
+    // The ONLY source of "ask the user for this": the node's declared external
+    // inputs. Never inputKeys/outputKeys — those are internal wiring, and
+    // trusting them is what asked for records/content/filename by mistake.
+    const declared = node.data.stateContract?.externalInputKeys ?? [];
     for (const key of declared) {
-      // A page_url is the same thing as a source_url when both are declared.
+      if (seen.has(key)) continue;
+      if (GENERIC_DERIVED_KEYS.has(key)) continue;
+      // A value a real step produces is not the user's to give.
+      if (producedKeys.has(key)) continue;
+      // page_url and source_url are the same entry value.
       if (key === 'page_url' && declared.includes('source_url')) continue;
-      consider(node, key);
+
+      const existing = externalInputValue(node, key) || String(node.data.initialState?.[key] ?? '');
+      const meta = fieldMeta.get(key);
+      seen.set(key, {
+        key,
+        label: humanizeKey(key),
+        nodeId: node.id,
+        nodeLabel: node.data.label,
+        value: existing,
+        // A registry field explains itself; a planner-only entry input (e.g. a
+        // trigger's target_url) gets a sensible generic description.
+        description: meta?.description ?? `The ${humanizeKey(key)} this workflow needs to start.`,
+        // Registry fields carry an explicit required flag; a planner entry input
+        // with no bound field is required (the flow cannot start without it).
+        required: meta ? meta.required : true,
+        format: meta?.format,
+      });
     }
   }
   return Array.from(seen.values());

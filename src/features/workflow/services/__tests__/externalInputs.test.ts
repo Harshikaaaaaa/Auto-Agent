@@ -43,8 +43,11 @@ function node(
   };
 }
 
-/** A trigger node whose declared output is really a user-supplied entry input. */
-function triggerNode(id: string, label: string, outputKeys: string[]): WorkflowNode {
+/**
+ * A trigger node. Its entry input is declared on `externalInputKeys` (as the
+ * planner now records it), NOT inferred from raw outputKeys.
+ */
+function triggerNode(id: string, label: string, entryInputs: string[]): WorkflowNode {
   return {
     id,
     type: 'trigger',
@@ -52,7 +55,7 @@ function triggerNode(id: string, label: string, outputKeys: string[]): WorkflowN
     data: {
       label,
       type: NodeType.TRIGGER,
-      stateContract: { inputKeys: [], outputKeys },
+      stateContract: { inputKeys: [], outputKeys: entryInputs, externalInputKeys: entryInputs },
     },
   };
 }
@@ -114,6 +117,20 @@ describe('requiredInputsForRun', () => {
       nodeLabel: 'Fetch Webpage',
       value: '',
     });
+  });
+
+  it('NEVER asks for internal wiring keys (inputKeys/outputKeys), only declared externals', () => {
+    // The reported bug: a step listed content/records/filename as inputs/outputs
+    // and the collector asked the user for them. Those are internal state — only
+    // externalInputKeys should ever be asked for.
+    const graph: WorkflowNode[] = [
+      node('extract', 'Extract Content', {
+        inputKeys: ['raw_content', 'content', 'records'],
+        outputKeys: ['extracted_text', 'filename', 'links'],
+        // No externalInputKeys declared: nothing is asked for.
+      }),
+    ];
+    expect(requiredInputsForRun(graph)).toHaveLength(0);
   });
 
   it('ignores generic model-derived keys', () => {

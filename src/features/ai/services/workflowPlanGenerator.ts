@@ -434,7 +434,11 @@ export function buildNodeFromPlanStep(step: PlanStep): NodeData {
       ...base,
       unsupported: true,
       unsupportedReason: step.unsupportedReason ?? 'No connected tool provides this capability.',
-      stateContract: { inputKeys: step.inputs, outputKeys: [] },
+      stateContract: {
+        inputKeys: step.inputs,
+        outputKeys: [],
+        externalInputKeys: step.externalInputs,
+      },
     };
   }
 
@@ -453,6 +457,9 @@ export function buildNodeFromPlanStep(step: PlanStep): NodeData {
           // The schema owns these keys, not the model's prose.
           inputKeys: action.inputKeys,
           outputKeys: action.outputKeys,
+          // The registry's external:true fields are authoritative for a bound
+          // action; the planner's declared externals are only used for steps
+          // with no bound action (trigger/generic), below.
           externalInputKeys: getExternalInputKeys(step.toolId, step.toolAction),
         },
       };
@@ -464,6 +471,11 @@ export function buildNodeFromPlanStep(step: PlanStep): NodeData {
     stateContract: {
       inputKeys: step.inputs,
       outputKeys: step.outputs.length > 0 ? step.outputs : ['result'],
+      // A trigger/generic step has no bound action, so the planner's declared
+      // external inputs are the only record of what the user must supply
+      // (e.g. the entry `target_url`/`source_url`). Persist them here instead of
+      // discarding them, so the run collector can ask for exactly these.
+      externalInputKeys: step.externalInputs,
     },
   };
 }

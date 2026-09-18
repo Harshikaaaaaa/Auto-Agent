@@ -71,7 +71,11 @@ import {
   type RequiredInput,
 } from '@features/workflow/services/externalInputs';
 import { NodeType } from '@/shared/types';
-import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
+import {
+  useWorkflowExecution,
+  type RunSummary,
+} from '@features/workflow/hooks/useWorkflowExecution';
+import type { ExecutionLog } from '@features/workflow/types';
 import { useTools } from '@features/tools/useTools';
 import { getTool, getAllTools } from '@features/tools/toolRegistry';
 import type {
@@ -95,6 +99,58 @@ import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
 // chunk fetched only when the user opens the Export modal, instead of bloating
 // the initial page load. This is what clears Vite's 500 kB chunk warning.
 const ExportModal = lazy(() => import('./ExportModal').then((m) => ({ default: m.ExportModal })));
+
+/** Shorten a node's output for the chat; the full detail stays in the monitor. */
+function summarizeOutput(output: string): string {
+  const clean = (output || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  return clean.length > 160 ? `${clean.slice(0, 157)}…` : clean;
+}
+
+/**
+ * Turn a finished run into a per-node chat report: a headline for the outcome,
+ * then one line per step saying whether it passed (and what it produced) or
+ * failed (and why). This is the same information the State Graph Monitor shows,
+ * surfaced in the conversation so the user never has to hunt for it.
+ */
+function buildRunReport(summary: RunSummary): string {
+  const icon: Record<string, string> = {
+    completed: '✅',
+    failed: '❌',
+    retrying: '🔁',
+    running: '⏳',
+  };
+  // The last log per node is its final outcome (a retried node logs twice).
+  const lastByNode = new Map<string, ExecutionLog>();
+  for (const log of summary.logs) lastByNode.set(log.node, log);
+  const steps = Array.from(lastByNode.values());
+
+  const passed = steps.filter((s) => s.status === 'completed').length;
+  const failed = steps.filter((s) => s.status === 'failed').length;
+
+  const headline =
+    summary.status === 'completed'
+      ? `Run finished — all ${passed} step${passed === 1 ? '' : 's'} passed.`
+      : summary.status === 'failed'
+        ? `Run failed — ${passed} passed, ${failed} failed.`
+        : summary.status === 'cancelled'
+          ? 'Run cancelled.'
+          : 'Run paused for approval.';
+
+  const lines = steps.map((log, index) => {
+    const mark = icon[log.status ?? 'running'] ?? '•';
+    const duration = log.durationMs != null ? ` (${Math.round(log.durationMs)}ms)` : '';
+    const head = `${mark} ${index + 1}. ${log.node}${duration}`;
+    if (log.status === 'failed') {
+      const why = log.failureKind ? ` [${log.failureKind}]` : '';
+      return `${head}${why}\n    ${summarizeOutput(log.output) || 'failed'}`;
+    }
+    const produced = summarizeOutput(log.output);
+    return produced ? `${head}\n    → ${produced}` : head;
+  });
+
+  return [headline, ...lines].join('\n');
+}
 
 const nodeTypes = {
   trigger: WorkflowNode,
@@ -1491,36 +1547,34 @@ export function WorkflowCanvas() {
           ),
         );
       }
-      await executeFlow();
-      if (activeTaskId) {
-        setTaskSessions((prev) =>
-          prev.map((task) =>
-            task.id === activeTaskId
-              ? {
-                  ...task,
-                  messages: [
-                    ...task.messages,
-                    { role: 'assistant', text: 'Execution completed successfully.' },
-                  ],
-                }
-              : task,
-          ),
-        );
-      }
+      // executeFlow returns the full run report synchronously, so the chat can
+      // show the per-node outcome without racing React state.
+      const summary = await executeFlow();
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: buildRunReport(summary) },
+      ]);
+
       if (activeWorkflowName) {
         const { recordWorkflowRun } = await import('@features/workflow/services/workflowStorage');
         const finishedAt = new Date();
+        const failedStep = summary.logs.find((log) => log.status === 'failed');
         await recordWorkflowRun(activeWorkflowName, {
-          status: 'completed',
+          // Record the REAL outcome, not always 'completed'.
+          status: summary.status === 'completed' ? 'completed' : 'failed',
+          failureKind: failedStep?.failureKind,
+          error: failedStep ? summarizeOutput(failedStep.output) : undefined,
           model: effectiveModel,
           provider: effectiveModel,
           nodeCount: runNodeCount,
+          failureCount: summary.logs.filter((log) => log.status === 'failed').length,
           durationMs: finishedAt.getTime() - runStartedAt.getTime(),
           startedAt: runStartedAt.toISOString(),
           finishedAt: finishedAt.toISOString(),
         });
         setRunHistoryReloadKey((k) => k + 1);
       }
+      setIsTesting(false);
     } catch (err) {
       const errorText = String(err || 'Workflow execution failed');
       const lower = errorText.toLowerCase();

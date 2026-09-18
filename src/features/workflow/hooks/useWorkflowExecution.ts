@@ -24,6 +24,16 @@ import {
 } from '@features/workflow/services/nodeFailure';
 import '@features/tools/connectors'; // ensure all tools are registered
 
+/**
+ * The outcome of a run, returned by executeFlow so the caller can report it in
+ * the chat without racing React state. `logs` is the per-node record: which
+ * step ran, whether it passed or failed, what it produced, and why it failed.
+ */
+export interface RunSummary {
+  status: 'completed' | 'failed' | 'paused' | 'cancelled';
+  logs: ExecutionLog[];
+}
+
 const EXECUTION_CHECKPOINT_KEY = 'autoagent_runtime_checkpoint';
 
 /**
@@ -180,6 +190,14 @@ export const useWorkflowExecution = (
     executedSignatures: new Set<string>(),
   });
 
+  // Mirrors executionLogs synchronously so executeFlow can return the complete
+  // run report at the moment it finishes, without waiting for a React re-render.
+  const runLogsRef = useRef<ExecutionLog[]>([]);
+  const appendLog = useCallback((entry: ExecutionLog) => {
+    runLogsRef.current = [...runLogsRef.current, entry];
+    setExecutionLogs((prev) => [...prev, entry]);
+  }, []);
+
   const pauseExecution = useCallback(() => {
     executionControlRef.current.pauseRequested = true;
     setRuntimeStatus('paused');
@@ -195,8 +213,10 @@ export const useWorkflowExecution = (
     setRuntimeStatus('cancelled');
   }, []);
 
-  const executeFlow = useCallback(async () => {
-    if (nodes.length === 0) return;
+  const executeFlow = useCallback(async (): Promise<RunSummary> => {
+    if (nodes.length === 0) {
+      return { status: 'completed', logs: [] };
+    }
 
     // ── Pre-flight: values no step can produce ──
     //
@@ -216,20 +236,20 @@ export const useWorkflowExecution = (
 
     if (missing.length > 0) {
       const detail = missing.map((item) => `${item.label} needs "${item.key}"`).join('; ');
-      setExecutionLogs([
-        {
-          node: missing[0].label,
-          time: new Date().toLocaleTimeString(),
-          output:
-            `Cannot start: ${missing.length === 1 ? 'a required value is' : 'required values are'} ` +
-            `missing. ${detail}. Fill these in on the step, then run again.`,
-          status: 'failed',
-          failureKind: 'invalid_input',
-        },
-      ]);
+      const failLog: ExecutionLog = {
+        node: missing[0].label,
+        time: new Date().toLocaleTimeString(),
+        output:
+          `Cannot start: ${missing.length === 1 ? 'a required value is' : 'required values are'} ` +
+          `missing. ${detail}. Fill these in on the step, then run again.`,
+        status: 'failed',
+        failureKind: 'invalid_input',
+      };
+      runLogsRef.current = [failLog];
+      setExecutionLogs([failLog]);
       setRuntimeStatus('failed');
       setIsExecuting(false);
-      return;
+      return { status: 'failed', logs: runLogsRef.current };
     }
 
     const restoredCheckpoint = loadRuntimeCheckpoint();
@@ -254,6 +274,7 @@ export const useWorkflowExecution = (
     setRuntimeStatus('running');
     setIsExecuting(true);
     setExecutionLogs([]);
+    runLogsRef.current = [];
 
     // Initialize GraphState
     // Check if the workflow provided initialState via the first node's data
@@ -313,7 +334,7 @@ export const useWorkflowExecution = (
       if (executionControlRef.current.cancelRequested) {
         setRuntimeStatus('cancelled');
         setIsExecuting(false);
-        return;
+        return { status: 'cancelled', logs: runLogsRef.current };
       }
 
       while (executionControlRef.current.pauseRequested) {
@@ -322,7 +343,7 @@ export const useWorkflowExecution = (
         if (executionControlRef.current.cancelRequested) {
           setRuntimeStatus('cancelled');
           setIsExecuting(false);
-          return;
+          return { status: 'cancelled', logs: runLogsRef.current };
         }
       }
 
@@ -418,7 +439,7 @@ export const useWorkflowExecution = (
             setGraphState({ ...state });
             setRuntimeStatus('paused');
             setIsExecuting(false);
-            return;
+            return { status: 'paused', logs: runLogsRef.current };
           }
         }
 
@@ -589,17 +610,14 @@ export const useWorkflowExecution = (
         const { __metadata, ...stateWithoutMeta } = state;
         const stateSnapshot = { ...stateWithoutMeta };
 
-        setExecutionLogs((prev) => [
-          ...prev,
-          {
-            node: node.data.label,
-            time: new Date().toLocaleTimeString(),
-            output: outputSummary,
-            status: 'completed',
-            stateSnapshot,
-            durationMs: nodeDurationMs,
-          },
-        ]);
+        appendLog({
+          node: node.data.label,
+          time: new Date().toLocaleTimeString(),
+          output: outputSummary,
+          status: 'completed',
+          stateSnapshot,
+          durationMs: nodeDurationMs,
+        });
 
         // Tool failure is detected above, before the merge, by reading the
         // declared `error` output. The substring sniff that used to live
@@ -644,19 +662,16 @@ export const useWorkflowExecution = (
           visited.delete(nodeId);
           queue.unshift(nodeId);
 
-          setExecutionLogs((prev) => [
-            ...prev,
-            {
-              node: node.data.label,
-              time: new Date().toLocaleTimeString(),
-              output:
-                `${message}\nRetrying in ${delay}ms (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS}) — ` +
-                `classified as ${kind}.`,
-              status: 'retrying',
-              failureKind: kind,
-              stateSnapshot: { ...state },
-            },
-          ]);
+          appendLog({
+            node: node.data.label,
+            time: new Date().toLocaleTimeString(),
+            output:
+              `${message}\nRetrying in ${delay}ms (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS}) — ` +
+              `classified as ${kind}.`,
+            status: 'retrying',
+            failureKind: kind,
+            stateSnapshot: { ...state },
+          });
 
           setNodes((nds) =>
             nds.map((n) =>
@@ -672,7 +687,7 @@ export const useWorkflowExecution = (
           if (executionControlRef.current.cancelRequested) {
             setRuntimeStatus('cancelled');
             setIsExecuting(false);
-            return;
+            return { status: 'cancelled', logs: runLogsRef.current };
           }
           continue;
         }
@@ -698,18 +713,15 @@ export const useWorkflowExecution = (
             ? `\nOther tools that can do this: ${alternatives.join(', ')}.`
             : '');
 
-        setExecutionLogs((prev) => [
-          ...prev,
-          {
-            node: node.data.label,
-            time: new Date().toLocaleTimeString(),
-            output: explanation,
-            status: 'failed',
-            failureKind: kind,
-            alternatives,
-            stateSnapshot: { ...state },
-          },
-        ]);
+        appendLog({
+          node: node.data.label,
+          time: new Date().toLocaleTimeString(),
+          output: explanation,
+          status: 'failed',
+          failureKind: kind,
+          alternatives,
+          stateSnapshot: { ...state },
+        });
         state = {
           ...state,
           __metadata: { ...state.__metadata, status: 'failed', error: String(err) },
@@ -746,7 +758,7 @@ export const useWorkflowExecution = (
           ),
         );
         setIsExecuting(false);
-        return;
+        return { status: 'failed', logs: runLogsRef.current };
       }
 
       // Determine which outgoing edges to follow.
@@ -845,7 +857,17 @@ export const useWorkflowExecution = (
     setCurrentNodeId(null);
     setCurrentNodeLabel(null);
     setIsExecuting(false);
-  }, [nodes, edges, setNodes]);
+
+    const finalStatus: RunSummary['status'] =
+      state.__metadata.status === 'completed'
+        ? 'completed'
+        : state.__metadata.status === 'paused'
+          ? executionControlRef.current.cancelRequested
+            ? 'cancelled'
+            : 'paused'
+          : 'failed';
+    return { status: finalStatus, logs: runLogsRef.current };
+  }, [nodes, edges, setNodes, appendLog]);
 
   const clearLogs = useCallback(() => {
     setExecutionLogs([]);

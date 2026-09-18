@@ -113,11 +113,14 @@ describe('convert to DOCX and download', () => {
     });
     expect(String(md.saved_filename)).toMatch(/\.md$/);
 
-    // The DOCX download node must save .docx (binary).
+    // The DOCX download node must save .docx (binary) — and it must deliver the
+    // DOCX bytes, not the markdown text renamed. Its size matches the decoded
+    // base64, which is far larger than the tiny markdown string.
     const docx = await runAction('files', 'download_file', {
       ...merged,
       label: 'Download DOCX File',
     });
     expect(String(docx.saved_filename)).toMatch(/\.docx$/);
+    expect(Number(docx.bytes)).toBeGreaterThan(String(merged.markdown).length);
   });
 });

@@ -495,7 +495,6 @@ export const useWorkflowExecution = (
           const mergedInput: Record<string, any> = { ...inputState };
 
           const reservedNodeKeys = new Set([
-            'label',
             'description',
             'icon',
             'color',
@@ -516,6 +515,10 @@ export const useWorkflowExecution = (
               mergedInput[key] = value;
             }
           }
+          // The node's label is a reliable format hint for a download node
+          // ("Download DOCX File" vs "Download Markdown File") when two parallel
+          // branches share state; pass it explicitly so a connector can use it.
+          if (node.data.label !== undefined) mergedInput.label = node.data.label;
 
           if (node.data.initialState && typeof node.data.initialState === 'object') {
             for (const [key, value] of Object.entries(node.data.initialState)) {

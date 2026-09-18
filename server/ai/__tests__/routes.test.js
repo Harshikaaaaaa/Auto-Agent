@@ -267,6 +267,27 @@ describe('POST /api/ai/node', () => {
     expect(sentPrompt).toContain('Scrape');
     expect(sentPrompt).toContain('raw_data');
   });
+
+  it('accepts a very large input and context without a shape rejection', async () => {
+    // A whole scraped article in the input and a large prior-output summary in
+    // context must NOT be rejected as "did not match the expected shape" — the
+    // AI node takes any size the workflow produces.
+    stubProvider('{"summary":"done"}');
+    const huge = 'x'.repeat(300_000);
+    const { status, json } = await post('/api/ai/node', {
+      nodeLabel: 'Summarize Content',
+      nodeDescription: 'Summarize.',
+      inputState: { extracted_text: huge },
+      outputKeys: ['summary'],
+      context: {
+        originalPrompt: huge,
+        executionHistory: [{ nodeLabel: 'Extract', outputSummary: huge }],
+      },
+    });
+
+    expect(status).toBe(200);
+    expect(json.output).toEqual({ summary: 'done' });
+  });
 });
 
 describe('POST /api/ai/patch', () => {

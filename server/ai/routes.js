@@ -132,24 +132,30 @@ const patchRequestSchema = z.object({
 // Node execution carries live workflow state, which can be large.
 const jsonValue = z.any();
 
+// Node execution carries live workflow state — a whole scraped page, its
+// extracted text, prior node outputs — which is legitimately large. The string
+// fields below are therefore NOT length-capped: an AI node must accept any input
+// the workflow produces (matching n8n), with the only real ceiling being the AI
+// provider's own token limit and the overall JSON_BODY_LIMIT. A cap here surfaced
+// as a confusing "request body did not match the expected shape" node failure.
 const nodeRequestSchema = z.object({
   nodeLabel: z.string().min(1).max(300),
-  nodeDescription: z.string().max(4_000).optional().default(''),
+  nodeDescription: z.string().optional().default(''),
   inputState: z.record(z.string(), jsonValue).optional().default({}),
   outputKeys: z.array(z.string().min(1).max(120)).min(1).max(50),
   context: z
     .object({
-      originalPrompt: z.string().max(8_000).optional().default(''),
+      originalPrompt: z.string().optional().default(''),
       fullGraphState: z.record(z.string(), jsonValue).optional().default({}),
       executionHistory: z
         .array(
           z.object({
             nodeLabel: z.string().max(300),
             outputKeys: z.array(z.string().max(120)).max(50).optional().default([]),
-            outputSummary: z.string().max(20_000).optional().default(''),
+            outputSummary: z.string().optional().default(''),
           }),
         )
-        .max(200)
+        .max(500)
         .optional()
         .default([]),
     })

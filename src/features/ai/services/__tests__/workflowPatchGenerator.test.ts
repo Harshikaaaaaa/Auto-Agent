@@ -306,6 +306,32 @@ describe('validation against this graph', () => {
     expect(patch.operations[0]).toMatchObject({ op: 'setCondition' });
   });
 
+  it('accepts an edge to a node ADDED in the same patch without a repair round', async () => {
+    // The reported failure: "add a Convert-to-DOCX step and wire it in" was
+    // rejected because the edge referenced a node that did not exist yet — even
+    // though the same patch created it. It must validate in one pass now.
+    respondWith({
+      summary: 'Add a DOCX step and connect it.',
+      operations: [
+        {
+          op: 'addNode',
+          label: 'Convert to Docx',
+          nodeType: 'tool',
+          toolId: 'content',
+          toolAction: 'to_docx',
+          after: 'fetch',
+        },
+        { op: 'addEdge', source: 'fetch', target: 'convert_to_docx' },
+      ],
+    });
+
+    const patch = await generateGraphPatch('add docx export', SHEETS_GRAPH);
+
+    // No repair round: the first answer validated.
+    expect(mockRequestPatch).toHaveBeenCalledTimes(1);
+    expect(patch.operations).toHaveLength(2);
+  });
+
   it('refuses a self-loop', async () => {
     respondWith(
       { operations: [{ op: 'addEdge', source: 'fetch', target: 'fetch' }] },
@@ -589,6 +615,31 @@ describe('applying operations', () => {
     // The old v1 survives, plus the pre-replace and post-replace snapshots.
     expect(versions?.[0].config.label).toBe('old');
     expect(versions!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('wires an edge to a node ADDED in the same patch (by label reference)', () => {
+    // The reported failure: add a "Convert to Docx" node and connect it, in one
+    // patch. The edge referenced the new node by label before it existed, so
+    // validation rejected the whole patch. It must resolve to the new node now.
+    const result = apply(
+      SHEETS_GRAPH,
+      {
+        op: 'addNode',
+        label: 'Convert to Docx',
+        nodeType: 'tool',
+        description: '',
+        toolId: 'content',
+        toolAction: 'to_docx',
+        after: 'fetch',
+      },
+      // Reference the just-added node by its normalized label.
+      { op: 'addEdge', source: 'fetch', target: 'convert_to_docx', condition: null },
+    );
+
+    const added = result.nodes.find((n) => n.data.label === 'Convert to Docx');
+    expect(added).toBeDefined();
+    // The edge resolved to the real new-node id, not a dangling reference.
+    expect(result.edges.some((e) => e.source === 'fetch' && e.target === added!.id)).toBe(true);
   });
 
   it('adds an edge once', () => {

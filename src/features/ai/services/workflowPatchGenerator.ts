@@ -216,6 +216,24 @@ function validatePatch(
   const nodeIds = nodes.map((node) => node.id);
   const knownNodeIds = new Set(nodeIds);
 
+  // Nodes this patch will CREATE are valid edge endpoints too, even though they
+  // do not exist on the canvas yet. Pre-compute the id each addNode will get
+  // (mirroring nodeIdFor at apply time) and also register the raw label, so the
+  // model can reference a just-added step by its generated id OR its label and
+  // the edge still validates. Without this, "add a Convert-to-DOCX node and
+  // wire it in" fails validation because the edge points at a node the same
+  // patch is about to add.
+  const taken = new Set(nodeIds);
+  for (const rawOp of raw.operations ?? []) {
+    if ((rawOp.op ?? '').trim() !== 'addNode') continue;
+    const label = text(rawOp.label);
+    if (!label) continue;
+    const predictedId = nodeIdFor(label, taken);
+    knownNodeIds.add(predictedId);
+    // Also accept the un-suffixed normalized label as an alias.
+    knownNodeIds.add(normalizeNodeRef(label));
+  }
+
   const actionNamesByTool = new Map<string, string[]>();
   for (const tool of catalog) {
     actionNamesByTool.set(
@@ -583,14 +601,24 @@ function nodeDataFor(spec: {
   };
 }
 
-/** A unique node id derived from a label. */
-function nodeIdFor(label: string, taken: Set<string>): string {
-  const base =
-    label
+/**
+ * Normalize a label (or a node reference) to the id STEM used for a node.
+ * Shared by id generation and edge-reference resolution so validation, apply,
+ * and the model's own references all agree on the same base string.
+ */
+function normalizeNodeRef(label: string): string {
+  return (
+    String(label ?? '')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
-      .slice(0, 40) || 'node';
+      .slice(0, 40) || 'node'
+  );
+}
+
+/** A unique node id derived from a label. */
+function nodeIdFor(label: string, taken: Set<string>): string {
+  const base = normalizeNodeRef(label);
   let id = base;
   for (let suffix = 2; taken.has(id); suffix += 1) {
     id = `${base}_${suffix}`;
@@ -621,6 +649,16 @@ export function applyPatch(
   const applied: string[] = [];
   const taken = new Set(nodes.map((node) => node.id));
 
+  // Maps a reference the model may use for a node CREATED in this patch — its
+  // normalized-label stem, or the id it would have been assigned — to the id it
+  // actually got. An edge added in the same patch can then point at a new node
+  // by label or predicted id and still resolve to the right node.
+  const addedRefToId = new Map<string, string>();
+  const resolveRef = (ref: string): string => {
+    if (taken.has(ref) && !addedRefToId.has(ref)) return ref; // an existing node
+    return addedRefToId.get(ref) ?? addedRefToId.get(normalizeNodeRef(ref)) ?? ref;
+  };
+
   for (const operation of patch.operations) {
     switch (operation.op) {
       case 'replanAll': {
@@ -632,6 +670,10 @@ export function applyPatch(
 
       case 'addNode': {
         const id = nodeIdFor(operation.label, taken);
+        // Record how this new node can be referenced by later operations in the
+        // same patch: by the id it got, and by its normalized label stem.
+        addedRefToId.set(id, id);
+        addedRefToId.set(normalizeNodeRef(operation.label), id);
         const anchorIndex = operation.after
           ? nodes.findIndex((node) => node.id === operation.after)
           : nodes.length - 1;
@@ -753,42 +795,42 @@ export function applyPatch(
       }
 
       case 'addEdge': {
-        const exists = edges.some(
-          (edge) => edge.source === operation.source && edge.target === operation.target,
-        );
+        const source = resolveRef(operation.source);
+        const target = resolveRef(operation.target);
+        const exists = edges.some((edge) => edge.source === source && edge.target === target);
         if (exists) break;
         edges = [
           ...edges,
           {
-            id: `edge_${operation.source}_${operation.target}`,
-            source: operation.source,
-            target: operation.target,
+            id: `edge_${source}_${target}`,
+            source,
+            target,
             ...(operation.condition ? { condition: operation.condition } : {}),
           },
         ];
-        applied.push(
-          `Connected “${labelOf(nodes, operation.source)}” to “${labelOf(nodes, operation.target)}”`,
-        );
+        applied.push(`Connected “${labelOf(nodes, source)}” to “${labelOf(nodes, target)}”`);
         break;
       }
 
       case 'removeEdge': {
+        const rmSource = resolveRef(operation.source);
+        const rmTarget = resolveRef(operation.target);
         const before = edges.length;
-        edges = edges.filter(
-          (edge) => !(edge.source === operation.source && edge.target === operation.target),
-        );
+        edges = edges.filter((edge) => !(edge.source === rmSource && edge.target === rmTarget));
         if (edges.length !== before) {
           applied.push(
-            `Disconnected “${labelOf(nodes, operation.source)}” from “${labelOf(nodes, operation.target)}”`,
+            `Disconnected “${labelOf(nodes, rmSource)}” from “${labelOf(nodes, rmTarget)}”`,
           );
         }
         break;
       }
 
       case 'setCondition': {
+        const condSource = resolveRef(operation.source);
+        const condTarget = resolveRef(operation.target);
         let changed = false;
         edges = edges.map((edge) => {
-          if (edge.source === operation.source && edge.target === operation.target) {
+          if (edge.source === condSource && edge.target === condTarget) {
             changed = true;
             return { ...edge, condition: operation.condition };
           }
@@ -796,21 +838,21 @@ export function applyPatch(
         });
         if (changed) {
           applied.push(
-            `Set the route from “${labelOf(nodes, operation.source)}” to run when ${operation.condition}`,
+            `Set the route from “${labelOf(nodes, condSource)}” to run when ${operation.condition}`,
           );
         } else {
           // No edge to carry it: add one rather than dropping the request.
           edges = [
             ...edges,
             {
-              id: `edge_${operation.source}_${operation.target}`,
-              source: operation.source,
-              target: operation.target,
+              id: `edge_${condSource}_${condTarget}`,
+              source: condSource,
+              target: condTarget,
               condition: operation.condition,
             },
           ];
           applied.push(
-            `Connected “${labelOf(nodes, operation.source)}” to “${labelOf(nodes, operation.target)}” when ${operation.condition}`,
+            `Connected “${labelOf(nodes, condSource)}” to “${labelOf(nodes, condTarget)}” when ${operation.condition}`,
           );
         }
         break;

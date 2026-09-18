@@ -42,7 +42,6 @@ function makeFakePlaywright(renderedHtml, subresourceUrls = []) {
           continue: vi.fn(() => routed.push({ url: requestUrl, action: 'continue' })),
           abort: vi.fn(() => routed.push({ url: requestUrl, action: 'abort' })),
         };
-        // eslint-disable-next-line no-await-in-loop
         await routeHandler(route);
       }
       return {

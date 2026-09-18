@@ -71,7 +71,6 @@ import {
   requiredInputsForRun,
   type RequiredInput,
 } from '@features/workflow/services/externalInputs';
-import { isInputFault } from '@features/workflow/services/nodeFailure';
 import { NodeType } from '@/shared/types';
 import {
   useWorkflowExecution,
@@ -96,6 +95,8 @@ import {
   SavedWorkflow,
 } from '@features/workflow/services/workflowStorage';
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
+import { useWorkflowVersions } from '@features/workflow/hooks/useWorkflowVersions';
+import { suggestFixes, type FixSuggestion } from '@features/workflow/services/failureFixes';
 // Lazy-loaded so the export machinery — the 10 framework code generators and
 // jszip, the single largest dependency in the app — ships as a separate async
 // chunk fetched only when the user opens the Export modal, instead of bloating
@@ -559,6 +560,12 @@ export function WorkflowCanvas() {
     | { kind: 'auth'; tools: { id: string; name: string }[] }
     | null
   >(null);
+  /**
+   * Targeted fixes offered after a failed run — a short list of specific
+   * candidate patches (each a canned instruction), plus a "write my own"
+   * option. Rendered as a chat card mirroring the pendingPatch pattern.
+   */
+  const [pendingFixes, setPendingFixes] = useState<FixSuggestion[] | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('autoagent_selected_model');
@@ -674,6 +681,15 @@ export function WorkflowCanvas() {
   });
   const { toolStatuses, authInProgress, authenticate } = useTools();
   const { undo, redo, canUndo, canRedo } = useUndoRedo(nodes, edges, setNodes, setEdges);
+  const {
+    versions,
+    currentIndex: versionIndex,
+    canGoBack: canGoBackVersion,
+    canGoForward: canGoForwardVersion,
+    snapshot: snapshotVersion,
+    goTo: goToVersion,
+  } = useWorkflowVersions();
+  const [showVersionMenu, setShowVersionMenu] = useState(false);
 
   // Offer to resume a saved run — in the CHAT, not a native popup. Fires once
   // per mount when a resumable checkpoint exists; the operator answers with the
@@ -984,15 +1000,139 @@ export function WorkflowCanvas() {
           ? result.applied.map((line) => `- ${line}`).join('\n')
           : '- nothing changed';
 
+      // Capture the resulting graph as a labeled version the user can switch
+      // back to. Snapshot the patched graph (result.*), not the pre-patch
+      // nodes/edges still in state this render.
+      const version = snapshotVersion(
+        result.nodes as unknown as Node[],
+        result.edges as unknown as Edge[],
+        patch.summary || result.applied[0] || 'workflow change',
+      );
+
       updateActiveTaskMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          text: `${patch.summary || 'Applied your change.'}\n${changes}`,
+          text: `${patch.summary || 'Applied your change.'}\n${changes}\n[${version.label}] saved — you can switch back to any version from the toolbar.`,
         },
       ]);
     },
-    [nodes, edges, setNodes, setEdges, updateActiveTaskMessages],
+    [nodes, edges, setNodes, setEdges, updateActiveTaskMessages, snapshotVersion],
+  );
+
+  /**
+   * Put a saved version back on the canvas. The undo/redo observer is suppressed
+   * for the restore so switching versions does not itself create a fresh undo
+   * entry the user then has to step through.
+   */
+  const switchToVersion = useCallback(
+    (index: number) => {
+      const restored = goToVersion(index, (vNodes, vEdges) => {
+        setNodes(vNodes);
+        setEdges(vEdges);
+      });
+      setShowVersionMenu(false);
+      if (restored) {
+        updateActiveTaskMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: `Switched to ${restored.label} — ${restored.summary}.`,
+          },
+        ]);
+      }
+    },
+    [goToVersion, setNodes, setEdges, updateActiveTaskMessages],
+  );
+
+  /**
+   * Run one chat-edit instruction through the real patch pipeline
+   * (generate → validate → apply), the same path a typed instruction takes.
+   * Extracted so a canned failure-fix prompt reuses it verbatim. Returns whether
+   * a patch was applied, so the caller can decide whether to re-run.
+   */
+  const runPatchInstruction = useCallback(
+    async (instruction: string): Promise<boolean> => {
+      updateActiveTaskMessages((prev) => [...prev, { role: 'user', text: instruction }]);
+      setIsPatching(true);
+      try {
+        const patch = await generateGraphPatch(
+          instruction,
+          {
+            nodes: nodes as unknown as WorkflowNodeModel[],
+            edges: edges as unknown as WorkflowEdge[],
+          },
+          effectiveModel,
+        );
+        if (patch.operations.length === 0) {
+          updateActiveTaskMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              text:
+                patch.clarification ||
+                'I could not turn that into a change. Can you say it a different way?',
+            },
+          ]);
+          return false;
+        }
+        applyGraphPatch(patch);
+        return true;
+      } catch (error) {
+        const detail =
+          error instanceof PatchValidationError
+            ? `I could not turn that into a valid change:\n- ${error.issues.join('\n- ')}`
+            : error instanceof Error
+              ? `I could not apply that change: ${error.message}`
+              : 'I could not apply that change.';
+        updateActiveTaskMessages((prev) => [...prev, { role: 'assistant', text: detail }]);
+        return false;
+      } finally {
+        setIsPatching(false);
+      }
+    },
+    [nodes, edges, effectiveModel, applyGraphPatch, updateActiveTaskMessages],
+  );
+
+  /**
+   * Handle a click on one of the post-failure fix suggestions. A `patch` fix
+   * runs its canned instruction and, on success, re-runs the workflow. The
+   * others route to the existing mechanisms (reconnect via a plain re-run, a
+   * value change via the input collector, retry via a re-run, custom via the
+   * chat box).
+   */
+  const applyFixSuggestion = useCallback(
+    async (fix: FixSuggestion) => {
+      setPendingFixes(null);
+      if (fix.kind === 'custom') {
+        updateActiveTaskMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: 'Okay — describe the fix below and I will apply it.' },
+        ]);
+        setShowChatPanel(true);
+        return;
+      }
+      if (fix.kind === 'change_input') {
+        // Reuse the input collector: pre-fill current values so the user just
+        // edits and re-runs.
+        const editable = requiredInputsForRun(nodes as unknown as WorkflowNodeModel[]);
+        if (editable.length > 0) {
+          setPendingInputs(editable);
+          setPendingInputValues(Object.fromEntries(editable.map((i) => [i.key, i.value])));
+        }
+        return;
+      }
+      if (fix.kind === 'reconnect' || fix.kind === 'retry') {
+        // Nothing to patch — just run again (reconnect is handled by the run's
+        // own auth gate, which will prompt if a tool is still disconnected).
+        setRunRequestToken((token) => token + 1);
+        return;
+      }
+      // A concrete graph patch: apply it, then re-run if it stuck.
+      const applied = await runPatchInstruction(fix.prompt ?? '');
+      if (applied) setRunRequestToken((token) => token + 1);
+    },
+    [nodes, runPatchInstruction, updateActiveTaskMessages],
   );
 
   /**
@@ -1564,22 +1704,23 @@ export function WorkflowCanvas() {
       // re-ask for it in that case.
       if (summary.status === 'failed') {
         const failedStep = summary.logs.find((log) => log.status === 'failed');
-        const inputFault = isInputFault(failedStep?.failureKind);
-        const editable = inputsToCollect(nodes as unknown as WorkflowNodeModel[]).length
-          ? inputsToCollect(nodes as unknown as WorkflowNodeModel[])
-          : requiredInputsForRun(nodes as unknown as WorkflowNodeModel[]);
 
-        if (inputFault && editable.length > 0) {
-          setPendingInputs(editable);
-          setPendingInputValues(Object.fromEntries(editable.map((i) => [i.key, i.value])));
+        // Offer targeted fixes for the actual failure — a short list of specific
+        // options (reconnect, change value, render the page, swap tool…) plus a
+        // "write my own" custom option — instead of one catch-all.
+        if (failedStep) {
+          const fixes = suggestFixes({
+            node: failedStep.node,
+            failureKind: failedStep.failureKind,
+            alternatives: failedStep.alternatives,
+            output: failedStep.output,
+          });
+          setPendingFixes(fixes);
           updateActiveTaskMessages((prev) => [
             ...prev,
             {
               role: 'assistant',
-              text:
-                `That value may be the problem${failedStep ? ` (${failedStep.node} could not use it)` : ''}. ` +
-                `Want to try again with a different ${editable.map((i) => i.label).join(' / ')}? ` +
-                `Edit ${editable.length === 1 ? 'it' : 'them'} below and I'll re-run.`,
+              text: `“${failedStep.node}” failed. Here are a few ways I can fix it — pick one below, or write your own.`,
             },
           ]);
         }
@@ -2422,6 +2563,65 @@ export function WorkflowCanvas() {
                 <Redo2 className="w-3.5 h-3.5" />
               </button>
             </div>
+            {/* Version switcher: step between the labeled snapshots each chat
+                patch produces. Hidden until at least one version exists. */}
+            {versions.length > 0 && (
+              <div className="relative flex items-center gap-1 border-r border-white/10 pr-3">
+                <button
+                  onClick={() => switchToVersion(versionIndex - 1)}
+                  disabled={!canGoBackVersion}
+                  title="Previous version"
+                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setShowVersionMenu((open) => !open)}
+                  title="Workflow versions"
+                  className="flex items-center gap-1 px-1.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/60 hover:text-white"
+                >
+                  <History className="w-3 h-3" />
+                  {versions[versionIndex]?.label ?? `v${versions.length}`}
+                  <span className="text-white/30">/ {versions.length}</span>
+                </button>
+                <button
+                  onClick={() => switchToVersion(versionIndex + 1)}
+                  disabled={!canGoForwardVersion}
+                  title="Next version"
+                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+                {showVersionMenu && (
+                  <div className="absolute right-0 top-full z-50 mt-2 w-64 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0d0d0d] p-1.5 shadow-2xl">
+                    {versions
+                      .map((v, i) => ({ v, i }))
+                      .reverse()
+                      .map(({ v, i }) => (
+                        <button
+                          key={v.id}
+                          onClick={() => switchToVersion(i)}
+                          className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-white/5 ${
+                            i === versionIndex ? 'bg-white/[0.06]' : ''
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-bolt-accent">
+                            {v.label}
+                            {i === versionIndex && (
+                              <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] text-bolt-accent">
+                                current
+                              </span>
+                            )}
+                          </span>
+                          <span className="line-clamp-2 text-[10px] leading-4 text-white/60">
+                            {v.summary}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
             {showSaveDialog ? (
               <div className="flex items-center gap-2">
                 <input
@@ -3000,6 +3200,49 @@ export function WorkflowCanvas() {
                       Discard
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Targeted fixes after a failed run: a short list of specific
+                  options for THIS failure, plus a "write my own" custom option.
+                  Each patch option applies its canned instruction and re-runs. */}
+              {pendingFixes && pendingFixes.length > 0 && (
+                <div
+                  data-testid="pending-fixes"
+                  className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-200">
+                    Suggested fixes
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {pendingFixes.map((fix, index) => (
+                      <button
+                        key={index}
+                        onClick={() => void applyFixSuggestion(fix)}
+                        disabled={isPatching}
+                        className={`flex w-full flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                          fix.kind === 'custom'
+                            ? 'border-white/15 bg-white/[0.03] hover:bg-white/5'
+                            : 'border-rose-400/25 bg-rose-400/5 hover:bg-rose-400/10'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold text-white/90">{fix.label}</span>
+                        <span className="text-[10px] leading-4 text-white/55">{fix.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPendingFixes(null);
+                      updateActiveTaskMessages((prev) => [
+                        ...prev,
+                        { role: 'assistant', text: 'Okay, I left it as is.' },
+                      ]);
+                    }}
+                    className="mt-2 rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                  >
+                    Dismiss
+                  </button>
                 </div>
               )}
 

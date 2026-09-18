@@ -1636,6 +1636,40 @@ export function WorkflowCanvas() {
     setRunRequestToken((token) => token + 1);
   }, [pendingInputs, pendingInputValues, writeInputsToNodes, updateActiveTaskMessages]);
 
+  /**
+   * Open the input editor on demand — every external input the workflow takes,
+   * pre-filled with its current value — so the user can change a value (e.g. a
+   * bad URL that returned an error page) and re-run, straight from the chat,
+   * without a successful-but-wrong run being a dead end. Always available, not
+   * just after a failure.
+   */
+  const openInputEditor = useCallback(() => {
+    const graph = nodes as unknown as WorkflowNodeModel[];
+    const editable = requiredInputsForRun(graph);
+    setShowChatPanel(true);
+    if (editable.length === 0) {
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: 'This workflow has no external inputs to change. Add a step that takes one, or edit a node in its settings.',
+        },
+      ]);
+      return;
+    }
+    setPendingInputs(editable);
+    setPendingInputValues(Object.fromEntries(editable.map((i) => [i.key, i.value])));
+    updateActiveTaskMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        text: `Change ${editable.length === 1 ? 'the value' : 'any values'} below and I'll re-run: ${editable
+          .map((i) => i.label)
+          .join(', ')}.`,
+      },
+    ]);
+  }, [nodes, updateActiveTaskMessages]);
+
   const handleExecuteFlow = async () => {
     const hasAllInputs = collectRequiredInputsBeforeExecution();
     if (!hasAllInputs) {
@@ -3515,7 +3549,17 @@ export function WorkflowCanvas() {
               }}
             />
             <div className="mt-3 flex items-center justify-between gap-2">
-              <div className="text-[9px] text-white/35 uppercase tracking-[0.2em]">Prompt edit</div>
+              {/* Always-available way to change an input value (e.g. a bad URL)
+                  and re-run, straight from the chat — even after a run that
+                  "passed" but scraped the wrong thing. */}
+              <button
+                onClick={openInputEditor}
+                disabled={isPatching || isExecuting || nodes.length === 0}
+                className="px-2.5 py-2 rounded-xl border border-white/10 bg-white/5 text-white/70 text-[10px] font-bold uppercase tracking-[0.16em] hover:bg-white/10 hover:text-white disabled:opacity-30"
+                title="Change a workflow input (like the URL) and re-run"
+              >
+                Change inputs
+              </button>
               <button
                 onClick={handleWorkflowChatSubmit}
                 disabled={isPatching}

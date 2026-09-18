@@ -659,6 +659,20 @@ export function applyPatch(
     return addedRefToId.get(ref) ?? addedRefToId.get(normalizeNodeRef(ref)) ?? ref;
   };
 
+  // The normalized references that explicit addEdge/setCondition ops in THIS
+  // patch mention. A node added with its own explicit wiring must NOT also be
+  // auto-spliced into the linear chain — that is what wrongly chained parallel
+  // branches (e.g. a DOCX branch and a Markdown branch) into one line and hung
+  // the two download nodes off each other. When the patch says where the new
+  // node connects, respect that and skip the auto-splice.
+  const explicitlyWiredRefs = new Set<string>();
+  for (const op of patch.operations) {
+    if (op.op === 'addEdge' || op.op === 'setCondition') {
+      explicitlyWiredRefs.add(normalizeNodeRef(op.source));
+      explicitlyWiredRefs.add(normalizeNodeRef(op.target));
+    }
+  }
+
   for (const operation of patch.operations) {
     switch (operation.op) {
       case 'replanAll': {
@@ -696,13 +710,17 @@ export function applyPatch(
         const insertAt = anchorIndex >= 0 ? anchorIndex + 1 : nodes.length;
         nodes = [...nodes.slice(0, insertAt), node, ...nodes.slice(insertAt)];
 
-        if (anchor) {
+        const nodeIsExplicitlyWired =
+          explicitlyWiredRefs.has(id) || explicitlyWiredRefs.has(normalizeNodeRef(operation.label));
+
+        if (anchor && !nodeIsExplicitlyWired) {
+          // No explicit wiring for this node in the patch: splice it into the
+          // chain after the anchor, re-hanging the anchor's old outgoing edges
+          // onto the new node so an insert does not orphan the tail.
           const downstream = edges.filter((edge) => edge.source === anchor.id);
           edges = [
             ...edges.filter((edge) => edge.source !== anchor.id),
             { id: `edge_${anchor.id}_${id}`, source: anchor.id, target: id },
-            // The old outgoing edges are re-hung off the new node so an
-            // insert splices into the chain instead of orphaning the tail.
             ...downstream.map((edge) => ({
               ...edge,
               id: `edge_${id}_${edge.target}`,
@@ -710,6 +728,12 @@ export function applyPatch(
             })),
           ];
           applied.push(`Added “${operation.label}” after “${anchor.data.label}”`);
+        } else if (nodeIsExplicitlyWired) {
+          // The patch provides this node's edges itself (a parallel branch, not
+          // a linear insert), so leave the existing edges alone and let the
+          // explicit addEdge ops connect it. This is what keeps a DOCX branch
+          // and a Markdown branch parallel instead of chaining them.
+          applied.push(`Added “${operation.label}”`);
         } else {
           applied.push(`Added “${operation.label}”`);
         }

@@ -642,6 +642,36 @@ describe('applying operations', () => {
     expect(result.edges.some((e) => e.source === 'fetch' && e.target === added!.id)).toBe(true);
   });
 
+  it('does NOT auto-chain a new node that the patch wires explicitly (parallel branch)', () => {
+    // The reported wiring bug: adding a DOCX branch "after" a node auto-spliced
+    // it into the linear chain AND re-hung the anchor's old downstream edge onto
+    // it — chaining two parallel branches into one line. When the patch supplies
+    // the new node's own edges, that auto-splice must be skipped.
+    const result = apply(
+      // start -> fetch -> save_sheets already exists.
+      SHEETS_GRAPH,
+      {
+        op: 'addNode',
+        label: 'Convert to Docx',
+        nodeType: 'tool',
+        description: '',
+        toolId: 'content',
+        toolAction: 'to_docx',
+        after: 'fetch',
+      },
+      // Explicitly branch it off fetch — a SECOND consumer of fetch, in parallel
+      // with the existing fetch -> save_sheets edge.
+      { op: 'addEdge', source: 'fetch', target: 'convert_to_docx', condition: null },
+    );
+
+    const docx = result.nodes.find((n) => n.data.label === 'Convert to Docx')!;
+    // The original fetch -> save_sheets edge survived (was NOT re-hung onto docx).
+    expect(result.edges.some((e) => e.source === 'fetch' && e.target === 'save_sheets')).toBe(true);
+    // The new branch is fetch -> docx, and docx is NOT chained to save_sheets.
+    expect(result.edges.some((e) => e.source === 'fetch' && e.target === docx.id)).toBe(true);
+    expect(result.edges.some((e) => e.source === docx.id)).toBe(false);
+  });
+
   it('adds an edge once', () => {
     const result = apply(
       SHEETS_GRAPH,

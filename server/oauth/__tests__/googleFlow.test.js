@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const BASE_ENV = {
   AUTOAGENT_SKIP_ENV_FILES: '1',
+  // Ollama needs no provider key, so env validation passes without one.
+  AI_PROVIDER: 'ollama',
   AUTH_ENABLED: 'false',
   CREDENTIAL_SECRET: 'oauth-test-credential-secret-32-characters-min',
   GOOGLE_CLIENT_ID: 'test-client-id.apps.googleusercontent.com',

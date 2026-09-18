@@ -66,6 +66,7 @@ import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import {
+  inputsToCollect,
   missingRequiredInputs,
   type RequiredInput,
 } from '@features/workflow/services/externalInputs';
@@ -1346,20 +1347,25 @@ export function WorkflowCanvas() {
    * collector's own button restarts it once the values are in.
    */
   const collectRequiredInputsBeforeExecution = useCallback(() => {
-    const missing = missingRequiredInputs(nodes as unknown as WorkflowNodeModel[]);
-    if (missing.length === 0) return true;
+    const graph = nodes as unknown as WorkflowNodeModel[];
+    // Only genuinely-required, still-blank values block the run.
+    const missingRequired = missingRequiredInputs(graph);
+    if (missingRequired.length === 0) return true;
 
-    setPendingInputs(missing);
-    setPendingInputValues(Object.fromEntries(missing.map((input) => [input.key, input.value])));
+    // The card shows the required-blank fields PLUS any optional ones, so the
+    // user can choose to provide extras — each explained by its description.
+    const toShow = inputsToCollect(graph);
+    setPendingInputs(toShow);
+    setPendingInputValues(Object.fromEntries(toShow.map((input) => [input.key, input.value])));
     setShowChatPanel(true);
     updateActiveTaskMessages((prev) => [
       ...prev,
       {
         role: 'assistant',
         text:
-          `Before I can run this, I need ${missing.length === 1 ? 'a value' : `${missing.length} values`} ` +
-          `nothing in the workflow produces: ${missing.map((i) => `"${i.label}"`).join(', ')}. ` +
-          `Fill ${missing.length === 1 ? 'it' : 'them'} in below and I'll run it.`,
+          `Before I can run this, I need ${missingRequired.length === 1 ? 'a value' : `${missingRequired.length} values`} ` +
+          `nothing in the workflow produces: ${missingRequired.map((i) => `"${i.label}"`).join(', ')}. ` +
+          `Fill ${missingRequired.length === 1 ? 'it' : 'them'} in below and I'll run it.`,
       },
     ]);
     return false;
@@ -1374,18 +1380,28 @@ export function WorkflowCanvas() {
    */
   const submitPendingInputs = useCallback(() => {
     if (!pendingInputs) return;
-    const hasBlank = pendingInputs.some((input) => !(pendingInputValues[input.key] ?? '').trim());
-    if (hasBlank) return; // Run button is disabled in this state anyway.
+    // Only REQUIRED fields must be filled; optional ones may be left blank.
+    const requiredBlank = pendingInputs.some(
+      (input) => input.required && !(pendingInputValues[input.key] ?? '').trim(),
+    );
+    if (requiredBlank) return; // Run button is disabled in this state anyway.
 
+    // Write only the fields the user actually provided (skip blank optionals).
     const values: Record<string, string> = {};
-    for (const input of pendingInputs) values[input.key] = pendingInputValues[input.key].trim();
+    for (const input of pendingInputs) {
+      const value = (pendingInputValues[input.key] ?? '').trim();
+      if (value) values[input.key] = value;
+    }
 
     writeInputsToNodes(values);
+    const provided = pendingInputs
+      .filter((input) => values[input.key])
+      .map((input) => `${input.label}: ${values[input.key]}`);
     updateActiveTaskMessages((prev) => [
       ...prev,
       {
         role: 'user',
-        text: pendingInputs.map((input) => `${input.label}: ${values[input.key]}`).join('\n'),
+        text: provided.length > 0 ? provided.join('\n') : 'Run it.',
       },
     ]);
     setPendingInputs(null);
@@ -2868,18 +2884,40 @@ export function WorkflowCanvas() {
                   <div className="mt-2 space-y-3">
                     {pendingInputs.map((input) => (
                       <div key={input.key}>
-                        <label className="mb-1 block text-[11px] font-medium text-white/70">
+                        <label className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-white/75">
                           {input.label}
-                          <span className="ml-1.5 text-[9px] font-normal text-white/35">
-                            for {input.nodeLabel}
-                          </span>
+                          {input.required ? (
+                            <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-bolt-accent">
+                              Required
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white/50">
+                              Optional
+                            </span>
+                          )}
                         </label>
+                        {/* Why this value is needed in THIS flow, from the tool's
+                            own field description — so a new field is never a mystery. */}
+                        {input.description && (
+                          <p className="mb-1 text-[10px] leading-4 text-white/40">
+                            {input.description}
+                            <span className="text-white/25"> · used by {input.nodeLabel}</span>
+                          </p>
+                        )}
                         <input
                           type="text"
                           autoFocus={input === pendingInputs[0]}
                           value={pendingInputValues[input.key] ?? ''}
                           aria-label={`${input.label} value`}
-                          placeholder={`Enter ${input.label}…`}
+                          placeholder={
+                            input.format === 'url'
+                              ? 'https://example.com'
+                              : input.format === 'email'
+                                ? 'name@example.com'
+                                : input.required
+                                  ? `Enter ${input.label}…`
+                                  : `Optional — leave blank to skip`
+                          }
                           onChange={(e) =>
                             setPendingInputValues((prev) => ({
                               ...prev,
@@ -2901,7 +2939,7 @@ export function WorkflowCanvas() {
                     <button
                       onClick={submitPendingInputs}
                       disabled={pendingInputs.some(
-                        (input) => !(pendingInputValues[input.key] ?? '').trim(),
+                        (input) => input.required && !(pendingInputValues[input.key] ?? '').trim(),
                       )}
                       className="flex items-center gap-1.5 rounded-lg bg-bolt-accent px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-bolt-accent/90 disabled:opacity-40"
                     >

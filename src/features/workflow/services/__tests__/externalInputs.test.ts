@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import '@features/tools/connectors';
 import { NodeType } from '@/shared/types';
 import type { WorkflowNode } from '@features/workflow/types';
 import {
   humanizeKey,
+  inputsToCollect,
   missingExternalInputs,
   missingRequiredInputs,
   requiredInputsForRun,
@@ -190,6 +192,88 @@ describe('missingRequiredInputs', () => {
         : n,
     );
     expect(missingRequiredInputs(filled)).toHaveLength(0);
+  });
+});
+
+describe('field metadata from the real tool registry', () => {
+  /** A node bound to a real registered action, so field metadata resolves. */
+  function boundNode(
+    id: string,
+    label: string,
+    toolId: string,
+    toolAction: string,
+    contract: { inputKeys?: string[]; outputKeys?: string[]; externalInputKeys?: string[] },
+  ): WorkflowNode {
+    return {
+      id,
+      type: 'tool',
+      position: { x: 0, y: 0 },
+      data: {
+        label,
+        type: NodeType.TOOL,
+        toolId,
+        toolAction,
+        stateContract: {
+          inputKeys: contract.inputKeys ?? [],
+          outputKeys: contract.outputKeys ?? [],
+          externalInputKeys: contract.externalInputKeys,
+        },
+      },
+    };
+  }
+
+  it('carries a required flag and description for a required input (web.fetch_page source_url)', () => {
+    const graph = [
+      boundNode('fetch', 'Fetch Webpage', 'web', 'fetch_page', {
+        externalInputKeys: ['source_url'],
+      }),
+    ];
+    const [input] = requiredInputsForRun(graph);
+    expect(input.key).toBe('source_url');
+    expect(input.required).toBe(true);
+    expect(input.description).toMatch(/url/i);
+    expect(input.format).toBe('url');
+  });
+
+  it('marks an unflagged external field OPTIONAL (slack channel override)', () => {
+    const graph = [
+      boundNode('notify', 'Notify Slack', 'slack', 'send_message', {
+        externalInputKeys: ['channel'],
+      }),
+    ];
+    const [input] = requiredInputsForRun(graph);
+    expect(input.key).toBe('channel');
+    expect(input.required).toBe(false);
+    expect(input.description).toMatch(/channel/i);
+  });
+
+  it('does not BLOCK a run on a blank optional field', () => {
+    const graph = [
+      boundNode('notify', 'Notify Slack', 'slack', 'send_message', {
+        externalInputKeys: ['channel'],
+      }),
+    ];
+    // No required-and-blank inputs -> nothing blocks, nothing to collect.
+    expect(missingRequiredInputs(graph)).toHaveLength(0);
+    expect(inputsToCollect(graph)).toHaveLength(0);
+  });
+
+  it('shows optional fields alongside a required one in the collector', () => {
+    const graph = [
+      boundNode('fetch', 'Fetch Webpage', 'web', 'fetch_page', {
+        externalInputKeys: ['source_url'],
+      }),
+      boundNode('notify', 'Notify Slack', 'slack', 'send_message', {
+        externalInputKeys: ['channel'],
+      }),
+    ];
+    const toCollect = inputsToCollect(graph);
+    const byKey = Object.fromEntries(toCollect.map((i) => [i.key, i]));
+    // source_url is required-and-blank -> triggers the card; channel rides along.
+    expect(byKey.source_url?.required).toBe(true);
+    expect(byKey.channel?.required).toBe(false);
+    // The gate blocks only on the required one.
+    expect(missingRequiredInputs(graph).map((i) => i.key)).toEqual(['source_url']);
   });
 });
 

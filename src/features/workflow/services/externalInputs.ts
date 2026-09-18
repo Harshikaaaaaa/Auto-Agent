@@ -1,4 +1,5 @@
 import type { NodeData, WorkflowNode } from '@features/workflow/types';
+import { getExternalInputFields, type ExternalInputField } from '@features/tools/toolRegistry';
 
 /**
  * External inputs: the values a workflow cannot produce for itself.
@@ -54,7 +55,7 @@ export function missingExternalInputs(
   );
 }
 
-/** One value the user must supply before a run, with where it will be written. */
+/** One value the user may/must supply before a run, with where it will be written. */
 export interface RequiredInput {
   /** The state key, e.g. `source_url`. */
   key: string;
@@ -66,6 +67,12 @@ export interface RequiredInput {
   nodeLabel: string;
   /** Any value already on the node (so an edit form can pre-fill it). */
   value: string;
+  /** What this value is for, in this flow — shown under the field. */
+  description: string;
+  /** Whether the run cannot proceed without it. Optional ones can be skipped. */
+  required: boolean;
+  /** A hint the UI can validate/annotate against (url, email, phone…). */
+  format?: ExternalInputField['format'];
 }
 
 /**
@@ -118,17 +125,34 @@ export function requiredInputsForRun(nodes: WorkflowNode[]): RequiredInput[] {
     for (const key of node.data.stateContract?.outputKeys ?? []) producedKeys.add(key);
   }
 
+  // Field metadata (description, required, format) lives on the bound action in
+  // the tool registry, keyed by the input name — collect it from every tool
+  // node so a key surfaced by a trigger can still be explained by the tool that
+  // consumes it (e.g. source_url's description comes from web.fetch_page).
+  const fieldMeta = new Map<string, ExternalInputField>();
+  for (const node of nodes) {
+    for (const field of getExternalInputFields(node.data.toolId, node.data.toolAction)) {
+      if (!fieldMeta.has(field.key)) fieldMeta.set(field.key, field);
+    }
+  }
+
   const seen = new Map<string, RequiredInput>();
   const consider = (node: WorkflowNode, key: string) => {
     if (producedKeys.has(key) || GENERIC_DERIVED_KEYS.has(key)) return;
     if (seen.has(key)) return;
     const existing = externalInputValue(node, key) || String(node.data.initialState?.[key] ?? '');
+    const meta = fieldMeta.get(key);
     seen.set(key, {
       key,
       label: humanizeKey(key),
       nodeId: node.id,
       nodeLabel: node.data.label,
       value: existing,
+      description: meta?.description ?? '',
+      // A trigger-surfaced entry input with no bound field is required by
+      // default (the flow needs it to start); otherwise trust the schema flag.
+      required: meta ? meta.required : true,
+      format: meta?.format,
     });
   };
 
@@ -155,7 +179,26 @@ export function requiredInputsForRun(nodes: WorkflowNode[]): RequiredInput[] {
   return Array.from(seen.values());
 }
 
-/** The subset of {@link requiredInputsForRun} whose value is still blank. */
+/**
+ * REQUIRED inputs whose value is still blank — the run cannot start until these
+ * are filled. Optional inputs are excluded (a blank optional does not block).
+ */
 export function missingRequiredInputs(nodes: WorkflowNode[]): RequiredInput[] {
-  return requiredInputsForRun(nodes).filter((input) => input.value.trim().length === 0);
+  return requiredInputsForRun(nodes).filter(
+    (input) => input.required && input.value.trim().length === 0,
+  );
+}
+
+/**
+ * What the run-input card should show: every required-and-blank input, PLUS any
+ * optional input (blank or not) so the user can choose to provide it. Returns []
+ * when nothing needs the user's attention, so the run proceeds silently.
+ */
+export function inputsToCollect(nodes: WorkflowNode[]): RequiredInput[] {
+  const all = requiredInputsForRun(nodes);
+  const missingRequired = all.filter((i) => i.required && i.value.trim().length === 0);
+  if (missingRequired.length === 0) return [];
+  // Something is required, so present the required-blank ones and the optional
+  // ones together; a filled required input is not re-asked.
+  return all.filter((i) => (i.required && i.value.trim().length === 0) || !i.required);
 }

@@ -132,6 +132,35 @@ export function getExternalInputKeys(toolId?: string, actionName?: string): stri
     .map(([key]) => key);
 }
 
+/** One external input field with the metadata the run-input prompt needs. */
+export interface ExternalInputField {
+  key: string;
+  description: string;
+  required: boolean;
+  format?: FieldSchema['format'];
+}
+
+/**
+ * The external input fields of an action, WITH their descriptions and
+ * required flags — so the run-input collector can explain each field and
+ * distinguish required from optional, instead of just listing key names.
+ */
+export function getExternalInputFields(toolId?: string, actionName?: string): ExternalInputField[] {
+  if (!toolId || !actionName) return [];
+  const action = getTool(toolId)?.actions.find((a) => a.name === actionName);
+  if (!action) return [];
+  return Object.entries(action.inputSchema)
+    .filter(([, schema]) => schema.external)
+    .map(([key, schema]) => ({
+      key,
+      description: schema.description ?? '',
+      // Explicit opt-in: a field is required only when the schema says so.
+      // Optional external fields (e.g. a Slack channel override) omit the flag.
+      required: schema.required === true,
+      format: schema.format,
+    }));
+}
+
 /** Get a tool by ID */
 export function getTool(id: string): Tool | undefined {
   return tools.get(id);

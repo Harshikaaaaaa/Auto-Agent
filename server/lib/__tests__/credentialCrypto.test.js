@@ -12,6 +12,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const BASE_ENV = {
   AUTOAGENT_SKIP_ENV_FILES: '1',
+  // Ollama needs no provider key, so env validation passes without one; without
+  // this the module defaults to openrouter and throws on the missing key.
+  AI_PROVIDER: 'ollama',
   AUTH_ENABLED: 'false',
   CREDENTIAL_SECRET: 'unit-test-credential-secret-value-32chars-min',
 };

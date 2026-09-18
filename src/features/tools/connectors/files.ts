@@ -18,6 +18,23 @@ const MIME_BY_EXTENSION: Record<string, string> = {
 /** Extensions delivered as BINARY (their content arrives base64-encoded). */
 const BINARY_EXTENSIONS = new Set(['docx', 'pdf']);
 
+/**
+ * Guess the file extension a download node intends from its label, e.g.
+ * "Download DOCX File" -> "docx", "Download Markdown File" -> "md". Used only as
+ * a hint when the node has no explicit filename/format, to tell two parallel
+ * download branches apart. Returns undefined when the label says nothing.
+ */
+function detectExtensionFromLabel(label: string): string | undefined {
+  const text = label.toLowerCase();
+  if (text.includes('docx') || text.includes('word')) return 'docx';
+  if (text.includes('pdf')) return 'pdf';
+  if (text.includes('markdown') || /\bmd\b/.test(text)) return 'md';
+  if (text.includes('csv')) return 'csv';
+  if (text.includes('json')) return 'json';
+  if (text.includes('html')) return 'html';
+  return undefined;
+}
+
 /** Decode a base64 string to bytes, in the browser or a test environment. */
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -94,10 +111,40 @@ const downloadFile: ToolActionDefinition = {
     bytes: { type: 'number', description: 'Size of the file in bytes.' },
   },
   execute: async (input) => {
-    // A binary artifact (docx/pdf) arrives base64-encoded under one of these
-    // keys; a text file arrives as a plain string under content/markdown/etc.
-    const binaryBase64 = input.docx_base64 ?? input.file_base64 ?? input.pdf_base64 ?? undefined;
-    const content = input.content ?? input.markdown ?? input.text ?? input.result ?? '';
+    // The REQUESTED format decides what to deliver — never "whatever base64
+    // happens to be in state". With parallel branches (a Markdown download and
+    // a DOCX download) both `markdown` and `docx_base64` are present in the
+    // merged state, so a node that guessed from state delivered a .docx for
+    // BOTH. The node's own filename/format is authoritative instead.
+    //
+    // Resolve the intended extension first, WITHOUT letting a stray base64
+    // payload flip it. An explicit `filename`/`format` on the node wins; a
+    // docx-branch `suggested_filename` (…\.docx) or markdown one (…\.md) is used
+    // only when the node itself did not say.
+    const explicitName = input.filename ?? input.format;
+    // The node's label ("Download DOCX File", "Download Markdown File") is a
+    // reliable branch hint when no explicit filename/format is configured, and
+    // it flows into the input as `label`. This is what disambiguates the two
+    // parallel downloads when they share the merged state.
+    const labelHint = detectExtensionFromLabel(String(input.label ?? ''));
+    const requestedExtension =
+      String(explicitName ?? '')
+        .split('.')
+        .pop()
+        ?.toLowerCase() || labelHint;
+    const wantsBinary = requestedExtension
+      ? BINARY_EXTENSIONS.has(requestedExtension)
+      : // Nothing said which format: fall back to whichever content exists,
+        // preferring text so a co-present docx_base64 does not hijack a plain
+        // download.
+        !(input.content ?? input.markdown ?? input.text ?? input.result);
+
+    const binaryBase64 = wantsBinary
+      ? (input.docx_base64 ?? input.file_base64 ?? input.pdf_base64 ?? undefined)
+      : undefined;
+    const content = wantsBinary
+      ? ''
+      : (input.content ?? input.markdown ?? input.text ?? input.result ?? '');
     const asString = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 
     if (!binaryBase64 && !asString) {
@@ -109,14 +156,24 @@ const downloadFile: ToolActionDefinition = {
       };
     }
 
-    // Choose the file name (and thus extension) — a base64 payload defaults to
-    // .docx when the name does not already say otherwise.
-    const fileName = safeFileName(
-      input.filename ?? input.suggested_filename ?? input.title,
-      'workflow-output',
-    );
-    const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-    const isBinary = BINARY_EXTENSIONS.has(extension) || Boolean(binaryBase64);
+    // Build the file name. Prefer the node's own name; only accept an upstream
+    // suggested_filename whose extension matches what we are actually delivering
+    // (so a docx branch's suggestion cannot rename a markdown download).
+    const upstreamName = input.suggested_filename;
+    const upstreamExt = String(upstreamName ?? '')
+      .split('.')
+      .pop()
+      ?.toLowerCase();
+    const upstreamMatches =
+      upstreamExt && BINARY_EXTENSIONS.has(upstreamExt) === wantsBinary ? upstreamName : undefined;
+    const targetExt = requestedExtension ?? (wantsBinary ? 'docx' : 'md');
+    // Derive a clean stem from the best available name, then FORCE the target
+    // extension so a markdown branch is always .md and a docx branch always
+    // .docx, regardless of what extension a co-present suggested_filename had.
+    const nameSource = String(explicitName ?? upstreamMatches ?? input.title ?? 'workflow-output');
+    const stem = toFileNameStem(nameSource.replace(/\.[a-z0-9]+$/i, ''));
+    const fileName = safeFileName(`${stem}.${targetExt}`);
+    const isBinary = wantsBinary && Boolean(binaryBase64);
 
     // A download needs a document to click through. In a non-browser context
     // (server-side rendering, tests) report honestly rather than pretending.

@@ -90,4 +90,34 @@ describe('convert to DOCX and download', () => {
     expect(String(doc.error)).toMatch(/no content/i);
     expect(doc.docx_base64).toBe('');
   });
+
+  it('picks the right file per branch when markdown AND docx are both in state', async () => {
+    // Parallel branches merge into one state, so the download nodes see BOTH
+    // `markdown` and `docx_base64`. Each must produce ITS OWN format — the bug
+    // was both saving as .docx. The node label disambiguates them.
+    const merged = {
+      markdown: '# Title\nbody text',
+      docx_base64: await runAction('content', 'to_docx', {
+        title: 'Title',
+        extracted_text: 'body text',
+      }).then((d) => d.docx_base64),
+      suggested_filename: 'title.docx', // the docx branch's suggestion, in shared state
+      title: 'Title',
+    };
+
+    // The Markdown download node — identified by its label — must save .md
+    // (text), NOT .docx, even though docx_base64 is present in state.
+    const md = await runAction('files', 'download_file', {
+      ...merged,
+      label: 'Download Markdown File',
+    });
+    expect(String(md.saved_filename)).toMatch(/\.md$/);
+
+    // The DOCX download node must save .docx (binary).
+    const docx = await runAction('files', 'download_file', {
+      ...merged,
+      label: 'Download DOCX File',
+    });
+    expect(String(docx.saved_filename)).toMatch(/\.docx$/);
+  });
 });

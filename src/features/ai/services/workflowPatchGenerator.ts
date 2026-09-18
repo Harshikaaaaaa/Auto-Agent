@@ -9,6 +9,7 @@ import {
   type CatalogTool,
 } from '@features/tools/toolRegistry';
 import { validateCondition } from '@features/workflow/services/safeExpression';
+import { NODE_VERSION_KEY, pushNodeVersion } from '@features/workflow/services/nodeVersions';
 import type { NodeData, WorkflowEdge, WorkflowNode } from '@features/workflow/types';
 
 /**
@@ -708,15 +709,22 @@ export function applyPatch(
         const index = nodes.findIndex((node) => node.id === operation.nodeId);
         if (index < 0) break;
         const previous = nodes[index];
-        nodes = nodes.map((node, at) =>
-          at === index
-            ? {
-                ...node,
-                type: NODE_TYPE_BY_PATCH_TYPE[operation.nodeType],
-                data: nodeDataFor(operation),
-              }
-            : node,
-        );
+        nodes = nodes.map((node, at) => {
+          if (at !== index) return node;
+          // nodeDataFor builds fresh data and would drop the node's version
+          // history; carry it forward, first recording the pre-replace config as
+          // a version so a replace can be undone one node at a time.
+          const baselined = pushNodeVersion(node.data);
+          const freshData: NodeData = {
+            ...nodeDataFor(operation),
+            [NODE_VERSION_KEY]: baselined[NODE_VERSION_KEY],
+          };
+          return {
+            ...node,
+            type: NODE_TYPE_BY_PATCH_TYPE[operation.nodeType],
+            data: pushNodeVersion(freshData),
+          };
+        });
         applied.push(`Replaced “${previous.data.label}” with “${operation.label}”`);
         break;
       }
@@ -724,19 +732,20 @@ export function applyPatch(
       case 'updateNodeConfig': {
         const target = nodes.find((node) => node.id === operation.nodeId);
         if (!target) break;
-        nodes = nodes.map((node) =>
-          node.id === operation.nodeId
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  ...operation.config,
-                  ...(operation.label ? { label: operation.label } : {}),
-                  ...(operation.description ? { description: operation.description } : {}),
-                },
-              }
-            : node,
-        );
+        nodes = nodes.map((node) => {
+          if (node.id !== operation.nodeId) return node;
+          // Record the CURRENT config as a version first (baseline on the first
+          // change), then apply the new config and record that too, so the node
+          // carries both the before and after and can be switched between them.
+          const baselined = pushNodeVersion(node.data);
+          const changed = {
+            ...baselined,
+            ...operation.config,
+            ...(operation.label ? { label: operation.label } : {}),
+            ...(operation.description ? { description: operation.description } : {}),
+          };
+          return { ...node, data: pushNodeVersion(changed) };
+        });
         applied.push(
           `Updated “${operation.label ?? target.data.label}”${summarizeConfig(operation)}`,
         );

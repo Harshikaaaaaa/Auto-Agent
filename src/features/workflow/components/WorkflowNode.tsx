@@ -2,6 +2,10 @@ import React, { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 import { NodeType } from '@/shared/types';
 import { NodeData } from '@features/workflow/types';
+import {
+  NODE_VERSION_KEY,
+  currentNodeVersionIndex,
+} from '@features/workflow/services/nodeVersions';
 import * as LucideIcons from 'lucide-react';
 
 /**
@@ -274,6 +278,30 @@ const ConfigBadges = ({ data }: { data: any }) => {
   );
 };
 
+/**
+ * The per-node version tag, e.g. "v2". Shown once a node has more than one
+ * recorded version, so the user can see at a glance which version is on the
+ * canvas and that a rollback is available in Node Settings.
+ */
+const VersionBadge = ({ data }: { data: any }) => {
+  const versions = Array.isArray(data[NODE_VERSION_KEY]) ? data[NODE_VERSION_KEY] : [];
+  if (versions.length < 2) return null;
+  const currentIndex = currentNodeVersionIndex(data);
+  const label = currentIndex >= 0 ? versions[currentIndex].label : `v${versions.length}`;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-2">
+      <span
+        className="flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/15 text-amber-300 border border-amber-500/25"
+        title={`${versions.length} versions — switch in Node Settings`}
+      >
+        <LucideIcons.History className="w-2.5 h-2.5" />
+        {label} / {versions.length}
+      </span>
+    </div>
+  );
+};
+
 const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
   const { isRunning, lastSuccess, type, stateContract } = data;
   const isAgent = type === NodeType.AI_AGENT;
@@ -301,6 +329,7 @@ const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
         </div>
         <StateKeyBadges stateContract={stateContract} />
         <ConfigBadges data={data} />
+        <VersionBadge data={data} />
         <Handle
           type="target"
           position={Position.Top}
@@ -332,6 +361,7 @@ const BaseNode = ({ data, selected }: { data: any; selected: boolean }) => {
         </div>
         <StateKeyBadges stateContract={stateContract} />
         <ConfigBadges data={data} />
+        <VersionBadge data={data} />
         {isRunning && (
           <div className="mt-2 flex items-center gap-2">
             <LucideIcons.Loader2 className="w-3 h-3 animate-spin text-bolt-accent" />

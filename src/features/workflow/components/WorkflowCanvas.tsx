@@ -97,6 +97,11 @@ import {
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
 import { useWorkflowVersions } from '@features/workflow/hooks/useWorkflowVersions';
 import { suggestFixes, type FixSuggestion } from '@features/workflow/services/failureFixes';
+import {
+  currentNodeVersionIndex,
+  listNodeVersions,
+  restoreNodeVersion,
+} from '@features/workflow/services/nodeVersions';
 // Lazy-loaded so the export machinery — the 10 framework code generators and
 // jszip, the single largest dependency in the app — ships as a separate async
 // chunk fetched only when the user opens the Export modal, instead of bloating
@@ -2896,6 +2901,54 @@ export function WorkflowCanvas() {
                         className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs min-h-[100px] outline-none focus:border-bolt-accent/30 resize-none"
                       />
                     </div>
+
+                    {/* Per-node version history: switch THIS node back to an
+                        earlier version of its config without touching the rest
+                        of the workflow — e.g. before re-running. Only shown once
+                        the node has more than one recorded version. */}
+                    {listNodeVersions(selectedNode.data).length > 1 &&
+                      (() => {
+                        const nodeVersions = listNodeVersions(selectedNode.data);
+                        const activeIndex = currentNodeVersionIndex(selectedNode.data);
+                        return (
+                          <div className="pt-3 border-t border-white/5 space-y-2">
+                            <label className="text-[10px] font-bold text-white/30 uppercase tracking-widest block">
+                              Version
+                            </label>
+                            <p className="text-[10px] leading-4 text-white/40">
+                              Roll this step back to an earlier version of its settings. Only this
+                              node changes.
+                            </p>
+                            <select
+                              value={activeIndex}
+                              onChange={(e) => {
+                                const index = Number(e.target.value);
+                                setNodes((nds) =>
+                                  nds.map((n) =>
+                                    n.id === selectedNodeId
+                                      ? { ...n, data: restoreNodeVersion(n.data, index) }
+                                      : n,
+                                  ),
+                                );
+                              }}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-bolt-accent/30"
+                            >
+                              {activeIndex === -1 && (
+                                <option value={-1} disabled>
+                                  (edited — not a saved version)
+                                </option>
+                              )}
+                              {nodeVersions.map((v, i) => (
+                                <option key={v.label} value={i}>
+                                  {v.label}
+                                  {i === nodeVersions.length - 1 ? ' (latest)' : ''} —{' '}
+                                  {new Date(v.at).toLocaleTimeString()}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })()}
 
                     {/* Initial State Editor (Workflow Inputs) */}
                     {selectedNode.id === 'root' && (

@@ -537,6 +537,60 @@ describe('applying operations', () => {
     expect(result.applied.join('\n')).toContain('render_mode = always');
   });
 
+  it('records a per-node version (before + after) on updateNodeConfig', () => {
+    const result = apply(SHEETS_GRAPH, {
+      op: 'updateNodeConfig',
+      nodeId: 'fetch',
+      label: null,
+      description: null,
+      config: { render_mode: 'always' },
+    });
+
+    const fetch = result.nodes.find((n) => n.id === 'fetch');
+    const versions = (fetch?.data as { __versions?: Array<{ config: { render_mode?: string } }> })
+      .__versions;
+    // v1 = the pre-patch config, v2 = with render_mode set — so the node can be
+    // rolled back one step on its own.
+    expect(versions).toHaveLength(2);
+    expect(versions?.[0].config.render_mode).toBeUndefined();
+    expect(versions?.[1].config.render_mode).toBe('always');
+  });
+
+  it('carries a node’s version history forward across replaceNode', () => {
+    // Start from a graph whose node already has a version recorded.
+    const seeded = {
+      ...SHEETS_GRAPH,
+      nodes: SHEETS_GRAPH.nodes.map((n) =>
+        n.id === 'fetch'
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                __versions: [{ label: 'v1', at: '2020-01-01T00:00:00Z', config: { label: 'old' } }],
+              },
+            }
+          : n,
+      ),
+    };
+
+    const result = apply(seeded, {
+      op: 'replaceNode',
+      nodeId: 'fetch',
+      nodeType: 'tool',
+      label: 'Fetch Page v2',
+      description: 'replaced',
+      toolId: 'web',
+      toolAction: 'fetch_page',
+    });
+
+    const fetch = result.nodes.find((n) => n.id === 'fetch');
+    const versions = (fetch?.data as { __versions?: Array<{ config: { label?: string } }> })
+      .__versions;
+    // The old v1 survives, plus the pre-replace and post-replace snapshots.
+    expect(versions?.[0].config.label).toBe('old');
+    expect(versions!.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('adds an edge once', () => {
     const result = apply(
       SHEETS_GRAPH,

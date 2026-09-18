@@ -91,6 +91,31 @@ describe('convert to DOCX and download', () => {
     expect(doc.docx_base64).toBe('');
   });
 
+  it('uses an upstream summary over the raw extracted text', async () => {
+    // A Summarize step ran before the converter, so BOTH the full article and
+    // the summary are in state. The document must contain the SUMMARY, not the
+    // full article the user asked to condense.
+    const doc = await runAction('content', 'to_docx', {
+      title: 'Report',
+      extracted_text: 'THE FULL ARTICLE that is very long and unsummarised.',
+      summary: 'SHORT SUMMARY of the article.',
+    });
+    const zip = await JSZip.loadAsync(String(doc.docx_base64), { base64: true });
+    const xml = await zip.file('word/document.xml')!.async('string');
+    expect(xml).toContain('SHORT SUMMARY');
+    expect(xml).not.toContain('THE FULL ARTICLE');
+  });
+
+  it('the content tool declares summary/result inputs so the engine forwards them', () => {
+    // The engine slices state to a node's inputKeys; without these declared, a
+    // summary would be sliced away before the converter runs.
+    for (const actionName of ['to_markdown', 'to_docx']) {
+      const action = getTool('content')?.actions.find((a) => a.name === actionName);
+      expect(action?.inputKeys).toContain('summary');
+      expect(action?.inputKeys).toContain('result');
+    }
+  });
+
   it('picks the right file per branch when markdown AND docx are both in state', async () => {
     // Parallel branches merge into one state, so the download nodes see BOTH
     // `markdown` and `docx_base64`. Each must produce ITS OWN format — the bug

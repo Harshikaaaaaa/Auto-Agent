@@ -72,6 +72,14 @@ const formatMarkdown: ToolActionDefinition = {
   inputSchema: {
     title: { type: 'string', description: 'Document heading.' },
     extracted_text: { type: 'string', description: 'Body text to include.' },
+    // Declared so the engine passes them through: when a Summarize step runs
+    // before this node, its output arrives under summary/result and must reach
+    // the converter (it takes precedence over extracted_text below).
+    summary: { type: 'string', description: 'A summary to use as the body, if present.' },
+    result: {
+      type: 'string',
+      description: 'An upstream AI result to use as the body, if present.',
+    },
     headings: {
       type: 'array',
       description: 'Outline to render when there is no body text.',
@@ -91,7 +99,13 @@ const formatMarkdown: ToolActionDefinition = {
   },
   execute: async (input) => {
     const title = input.title ?? input.heading ?? '';
-    const text = input.extracted_text ?? input.text ?? input.summary ?? input.content ?? '';
+    // A summary/result from an upstream AI step takes precedence over the raw
+    // extracted text: if a Summarize node ran before this converter, the user
+    // wants the SUMMARY in the document, not the full article. Only fall back to
+    // extracted_text when no summary was produced (the plain scrape -> convert
+    // flow). Without this, extracted_text always won and the summary was ignored.
+    const text =
+      input.summary ?? input.result ?? input.extracted_text ?? input.text ?? input.content ?? '';
 
     const markdown = toMarkdown({
       title: String(title),
@@ -128,6 +142,14 @@ const formatDocx: ToolActionDefinition = {
       type: 'string',
       description: 'Body text (plain or Markdown) to put in the document.',
     },
+    // See to_markdown: a Summarize step's output arrives here and takes
+    // precedence over the raw extracted text.
+    summary: { type: 'string', description: 'A summary to use as the body, if present.' },
+    result: {
+      type: 'string',
+      description: 'An upstream AI result to use as the body, if present.',
+    },
+    markdown: { type: 'string', description: 'Markdown body, if produced upstream.' },
   },
   outputSchema: {
     // Base64 so the binary .docx travels through the string-typed graph state
@@ -138,8 +160,17 @@ const formatDocx: ToolActionDefinition = {
   },
   execute: async (input) => {
     const title = String(input.title ?? input.heading ?? '');
+    // Prefer an upstream summary/result over the raw extracted text (see the
+    // to_markdown note): a Summarize step's output must land in the .docx, not
+    // the full article it summarised.
     const text = String(
-      input.extracted_text ?? input.text ?? input.markdown ?? input.summary ?? input.content ?? '',
+      input.summary ??
+        input.result ??
+        input.extracted_text ??
+        input.text ??
+        input.markdown ??
+        input.content ??
+        '',
     );
 
     if (!title.trim() && !text.trim()) {

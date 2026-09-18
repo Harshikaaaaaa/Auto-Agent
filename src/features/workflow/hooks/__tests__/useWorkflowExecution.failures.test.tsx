@@ -357,6 +357,53 @@ describe('alternatives are suggested, never substituted', () => {
   });
 });
 
+describe('retrying after a failure re-runs the graph', () => {
+  it('does not skip nodes left over from the failed run', async () => {
+    // The failed run leaves a checkpoint whose executedSignatures name the
+    // nodes that DID succeed. A retry (e.g. with a corrected URL) must not
+    // treat those signatures as "already done" and skip the nodes — that made
+    // a retry execute zero nodes and report "all 0 steps passed".
+    const nodes = [
+      toolNode('fetch', 'test_flaky', 'read_thing', {
+        stateContract: { inputKeys: [], outputKeys: ['thing'] },
+      }),
+      toolNode('send', 'test_flaky', 'send_thing', {
+        stateContract: { inputKeys: ['thing'], outputKeys: ['sent'] },
+      }),
+    ];
+    const edges = [{ id: 'e', source: 'fetch', target: 'send' } as FlowEdge];
+
+    const { result } = renderHook(() =>
+      useWorkflowExecution(nodes, edges, vi.fn(), async () => true),
+    );
+
+    // First run: the send fails, so fetch succeeds and its signature is saved.
+    scripted.send_thing = async () => ({ error: 'Recipient was rejected. Verify the address.' });
+    let first: { status: string; logs: ExecutionLog[] } = { status: '', logs: [] };
+    await act(async () => {
+      first = await result.current.executeFlow();
+    });
+    expect(first.status).toBe('failed');
+    expect(calls).toContain('read_thing');
+    expect(calls).toContain('send_thing');
+
+    // Second run (the retry): everything works now. Both nodes must execute
+    // again — neither may be skipped as a duplicate — and the run completes.
+    calls = [];
+    scripted.send_thing = async () => ({ sent: true });
+    let second: { status: string; logs: ExecutionLog[] } = { status: '', logs: [] };
+    await act(async () => {
+      second = await result.current.executeFlow();
+    });
+
+    expect(second.status).toBe('completed');
+    // The whole graph re-ran; nothing was skipped from the stale checkpoint.
+    expect(calls).toEqual(['read_thing', 'send_thing']);
+    const completed = second.logs.filter((log) => log.status === 'completed');
+    expect(completed).toHaveLength(2);
+  });
+});
+
 describe('pre-flight validation', () => {
   it('refuses to start when a user-supplied value is missing', async () => {
     const { status, logs } = await run([

@@ -266,7 +266,13 @@ export const useWorkflowExecution = (
       executedSignatures: new Set<string>(),
     };
 
-    if (restoredCheckpoint?.executedSignatures?.length) {
+    // Only carry executed signatures forward when we are genuinely RESUMING a
+    // paused run. A leftover checkpoint from a run that FAILED (or a fresh run
+    // that happens to find stale state) must not pre-seed these: doing so makes
+    // every already-run node match its old signature and get skipped, so a
+    // retry — e.g. re-running with a corrected URL — silently executes zero
+    // nodes and reports "all 0 steps passed".
+    if (canResume && restoredCheckpoint?.executedSignatures?.length) {
       restoredCheckpoint.executedSignatures.forEach((sig) =>
         executionControlRef.current.executedSignatures.add(sig),
       );

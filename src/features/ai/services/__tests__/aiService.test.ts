@@ -1,7 +1,6 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AI_CONFIG } from '@features/ai/config';
 import { AiRequestError } from '@features/ai/services/aiClient';
 import { NodeExecutionError } from '@features/workflow/services/nodeFailure';
 import { executeNodeAction } from '../aiService';
@@ -144,7 +143,9 @@ describe('executeNodeAction', () => {
       nodeDescription: 'Write three bullets.',
       inputState: { extracted_text: 'hello' },
       outputKeys: ['summary'],
-      provider: AI_CONFIG.provider,
+      // 'auto' so the SERVER's AI_PROVIDER decides, rather than the client
+      // forcing a provider that may have a smaller context window.
+      provider: 'auto',
     });
   });
 

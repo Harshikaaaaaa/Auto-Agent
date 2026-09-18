@@ -1,4 +1,3 @@
-import { AI_CONFIG } from '../config';
 import type { WorkflowContextBuffer } from '../types';
 import { AiRequestError, requestNodeExecution } from './aiClient';
 import {
@@ -28,9 +27,18 @@ import '@features/tools/connectors';
  * reachable.
  */
 
-/** Provider the server should use, or 'auto' to let it decide. */
-function configuredProvider(): 'ollama' | 'gemini' | 'openrouter' {
-  return AI_CONFIG.provider;
+/**
+ * Provider to request for a node call.
+ *
+ * 'auto' — so the SERVER's AI_PROVIDER decides. The client config hardcodes
+ * 'openrouter', which was overriding the operator's server-side choice: a
+ * workflow ran on OpenRouter's 128K-token model even when the server was set to
+ * Gemini (1M tokens), so a large page hit a context limit it would not have hit
+ * on the configured provider. Deferring to the server fixes that and keeps the
+ * key handling server-side.
+ */
+function configuredProvider(): 'ollama' | 'gemini' | 'openrouter' | 'auto' {
+  return 'auto';
 }
 
 /** Map a transport-level AI error onto the engine's failure taxonomy. */

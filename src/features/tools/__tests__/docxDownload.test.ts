@@ -46,6 +46,16 @@ describe('convert to DOCX and download', () => {
     expect(action?.description.toLowerCase()).toContain('docx');
   });
 
+  it('download_file declares the keys converters emit, so the engine passes them through', () => {
+    // The engine slices state to a node's declared inputKeys before running it.
+    // If download_file only declared "content", the markdown/docx output was
+    // sliced away and the file came out empty ("no content to download").
+    const download = getTool('files')?.actions.find((a) => a.name === 'download_file');
+    expect(download?.inputKeys).toContain('markdown');
+    expect(download?.inputKeys).toContain('docx_base64');
+    expect(download?.inputKeys).toContain('file_base64');
+  });
+
   it('produces a valid .docx and downloads it', async () => {
     const doc = await runAction('content', 'to_docx', {
       title: 'Scraped Article',

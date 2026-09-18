@@ -63,13 +63,25 @@ const downloadFile: ToolActionDefinition = {
   sideEffect: 'read',
   requiresAuth: false,
   costProfile: { latencyMs: 10, cost: 0, reliability: 10 },
+  // The executor passes a node ONLY its declared input keys from graph state, so
+  // every key an upstream step might place the content under must be declared
+  // here — otherwise it is sliced out before this action runs and the file comes
+  // out empty. `markdown` (to_markdown), `docx_base64`/`file_base64` (to_docx)
+  // and the generic text aliases are all accepted.
   inputSchema: {
     content: {
       type: 'string',
       description:
-        'File content. Plain text for md/txt/csv/json/html, or base64 for a binary file (docx/pdf).',
-      required: true,
+        'File content. Plain text for md/txt/csv/json/html, or base64 for a binary file (docx/pdf). May instead arrive under markdown/text/docx_base64/file_base64.',
     },
+    markdown: { type: 'string', description: 'Markdown content (from a to_markdown step).' },
+    text: { type: 'string', description: 'Plain text content.' },
+    result: { type: 'string', description: 'Generic upstream result to write.' },
+    docx_base64: { type: 'string', description: 'Base64 .docx (from a to_docx step).' },
+    file_base64: { type: 'string', description: 'Base64 binary file content.' },
+    pdf_base64: { type: 'string', description: 'Base64 .pdf content.' },
+    suggested_filename: { type: 'string', description: 'File name proposed by an upstream step.' },
+    title: { type: 'string', description: 'Used to derive a file name when none is given.' },
     filename: {
       type: 'string',
       description:

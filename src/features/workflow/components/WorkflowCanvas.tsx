@@ -2944,6 +2944,62 @@ export function WorkflowCanvas() {
                       />
                     </div>
 
+                    {/* AI cache toggle: for an AI/generic node (no bound tool),
+                        reuse the last output instead of calling the model again.
+                        Handy when iterating on downstream steps — no repeated AI
+                        cost/latency for a step whose result has not changed. */}
+                    {!selectedNode.data.toolId &&
+                      selectedNode.id !== 'root' &&
+                      (selectedNode.data.stateContract?.outputKeys?.length ?? 0) > 0 && (
+                        <div className="pt-3 border-t border-white/5">
+                          <label className="flex items-center justify-between gap-3">
+                            <span>
+                              <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest block">
+                                Use cached output
+                              </span>
+                              <span className="mt-1 block text-[10px] leading-4 text-white/40">
+                                Skip the AI call and replay this node&rsquo;s last result.
+                                {selectedNode.data.cachedOutput
+                                  ? ' A cached result is available.'
+                                  : ' Run once first to create a cache.'}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={Boolean(selectedNode.data.useCachedOutput)}
+                              disabled={!selectedNode.data.cachedOutput}
+                              onClick={() =>
+                                setNodes((nds) =>
+                                  nds.map((n) =>
+                                    n.id === selectedNodeId
+                                      ? {
+                                          ...n,
+                                          data: {
+                                            ...n.data,
+                                            useCachedOutput: !n.data.useCachedOutput,
+                                          },
+                                        }
+                                      : n,
+                                  ),
+                                )
+                              }
+                              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-30 ${
+                                selectedNode.data.useCachedOutput ? 'bg-bolt-accent' : 'bg-white/15'
+                              }`}
+                            >
+                              <span
+                                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                                  selectedNode.data.useCachedOutput
+                                    ? 'translate-x-4'
+                                    : 'translate-x-0.5'
+                                }`}
+                              />
+                            </button>
+                          </label>
+                        </div>
+                      )}
+
                     {/* Per-node version history: switch THIS node back to an
                         earlier version of its config without touching the rest
                         of the workflow — e.g. before re-running. Only shown once

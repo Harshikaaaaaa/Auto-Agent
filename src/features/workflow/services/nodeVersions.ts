@@ -19,7 +19,7 @@ import type { NodeData } from '@features/workflow/types';
 export const NODE_VERSION_KEY = '__versions';
 
 /** Fields that are run state, not configuration, and must not be versioned. */
-const TRANSIENT_KEYS = new Set(['isRunning', 'lastSuccess', 'output']);
+const TRANSIENT_KEYS = new Set(['isRunning', 'lastSuccess', 'output', 'cachedOutput']);
 
 /** One captured version of a node's configuration. */
 export interface NodeVersion {

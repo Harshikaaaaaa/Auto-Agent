@@ -526,6 +526,9 @@ export const useWorkflowExecution = (
             'lastSuccess',
             'output',
             'initialState',
+            // UI/runtime bookkeeping, never a tool input.
+            'cachedOutput',
+            'useCachedOutput',
           ]);
 
           for (const [key, value] of Object.entries(node.data || {})) {
@@ -582,6 +585,16 @@ export const useWorkflowExecution = (
               nodeOutput[key] = node.data.initialState[key];
             }
           }
+        } else if (
+          node.data.useCachedOutput &&
+          node.data.cachedOutput &&
+          typeof node.data.cachedOutput === 'object'
+        ) {
+          // "Use cached output" is on and this node has a previous result:
+          // replay it instead of calling the AI again. This is for iterating on
+          // downstream nodes without paying for (or waiting on) the same AI step
+          // every run. The toggle is set per node in Node Settings.
+          nodeOutput = { ...(node.data.cachedOutput as Record<string, any>) };
         } else if (outputKeys.length > 0) {
           // No tool binding and no initialState — call Gemini AI to process this node
           // Pass the context buffer so AI has full workflow awareness
@@ -661,7 +674,16 @@ export const useWorkflowExecution = (
             n.id === nodeId
               ? {
                   ...n,
-                  data: { ...n.data, isRunning: false, lastSuccess: true, output: outputSummary },
+                  data: {
+                    ...n.data,
+                    isRunning: false,
+                    lastSuccess: true,
+                    output: outputSummary,
+                    // Cache the STRUCTURED output so a node with "use cached
+                    // output" enabled can replay it without re-running (see the
+                    // AI branch above). Only meaningful for AI/generic nodes.
+                    cachedOutput: nodeOutput,
+                  },
                 }
               : n,
           ),

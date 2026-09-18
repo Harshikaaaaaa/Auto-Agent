@@ -65,6 +65,10 @@ import { AI_CONFIG } from '@features/ai/config';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
 import { RunHistoryPanel } from './RunHistoryPanel';
+import {
+  missingRequiredInputs,
+  type RequiredInput,
+} from '@features/workflow/services/externalInputs';
 import { NodeType } from '@/shared/types';
 import { useWorkflowExecution } from '@features/workflow/hooks/useWorkflowExecution';
 import { useTools } from '@features/tools/useTools';
@@ -476,6 +480,16 @@ export function WorkflowCanvas() {
    * canvas undo records no history yet — so these are never auto-applied.
    */
   const [pendingPatch, setPendingPatch] = useState<GraphPatch | null>(null);
+  /**
+   * External inputs a run needs but does not have yet (a target URL, a
+   * recipient, a spreadsheet id). Collected with an inline form in the chat
+   * panel instead of a stack of blocking window.prompt dialogs. When set, the
+   * chat shows one field per input and a "Run with these" button.
+   */
+  const [pendingInputs, setPendingInputs] = useState<RequiredInput[] | null>(null);
+  const [pendingInputValues, setPendingInputValues] = useState<Record<string, string>>({});
+  /** Bumped by the input collector to request a run after the node write flushes. */
+  const [runRequestToken, setRunRequestToken] = useState(0);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('autoagent_selected_model');
@@ -1285,112 +1299,99 @@ export function WorkflowCanvas() {
     return { valid: true, message: 'Workflow ready' };
   }, [nodes, edges]);
 
-  const collectRequiredInputsBeforeExecution = useCallback(() => {
-    const requiredInputs = new Map<string, string>();
-    const producedKeys = new Set<string>();
-    const genericDerivedKeys = new Set([
-      'input',
-      'query',
-      'context',
-      'result',
-      'raw_data',
-      'categorized_results',
-      'message',
-      'text',
-      'body',
-      'data',
-      'rows',
-      'values',
-      'summary',
-    ]);
-
-    nodes.forEach((node) => {
-      const outputKeys = Array.isArray(node.data?.stateContract?.outputKeys)
-        ? node.data.stateContract.outputKeys
-        : [];
-      outputKeys.forEach((key: string) => producedKeys.add(key));
-    });
-
-    nodes.forEach((node) => {
-      const contract = node.data?.stateContract || {};
-      // The Sheets special case is gone with the auto-created default
-      // spreadsheet: connecting Sheets no longer conjures a file to write
-      // into, so a spreadsheet id is asked for like any other external input.
-      const declaredKeys = Array.isArray(contract.externalInputKeys)
-        ? contract.externalInputKeys
-        : Array.isArray(contract.inputKeys)
-          ? contract.inputKeys
-          : [];
-      const inputKeys = declaredKeys.filter((key: string) => {
-        if (producedKeys.has(key) || genericDerivedKeys.has(key)) return false;
-        if (key === 'page_url' && declaredKeys.includes('source_url')) return false;
-        return true;
-      });
-      inputKeys.forEach((key: string) => {
-        if (!requiredInputs.has(key)) {
-          const existingValue = node.data?.initialState?.[key];
-          requiredInputs.set(key, existingValue ?? '');
-        }
-      });
-    });
-
-    const missingKeys = Array.from(requiredInputs.entries())
-      .filter(([, value]) => !value || String(value).trim() === '')
-      .map(([key]) => key);
-
-    if (missingKeys.length === 0) {
-      return true;
-    }
-
-    const updatedInitialState: Record<string, string> = {};
-
-    for (const key of missingKeys) {
-      const label = key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
-      const answer = window.prompt(
-        `This workflow needs a value for "${label || key}". Enter it to continue:`,
-        '',
-      );
-      if (answer === null) {
-        return false;
-      }
-      if (!answer.trim()) {
-        alert(`"${label || key}" is required before running this workflow.`);
-        return false;
-      }
-      updatedInitialState[key] = answer.trim();
-    }
-
-    setNodes((prev) =>
-      prev.map((node) => {
-        const contract = node.data?.stateContract || {};
-        const contractKeys = Array.isArray(contract.externalInputKeys)
-          ? contract.externalInputKeys
-          : node.data?.toolId === 'google_sheets'
-            ? ['spreadsheetId']
+  /**
+   * Write supplied input values onto every node that declares the key.
+   *
+   * Written in BOTH places a run reads from: the top-level `node.data[key]`
+   * (used when a tool node builds its call) and `node.data.initialState[key]`
+   * (which seeds the graph state and is what the executor's pre-flight scans).
+   * Writing only one leaves the run either without the value or still reporting
+   * it as missing.
+   */
+  const writeInputsToNodes = useCallback(
+    (values: Record<string, string>) => {
+      setNodes((prev) =>
+        prev.map((node) => {
+          const contract = node.data?.stateContract || {};
+          const declared = Array.isArray(contract.externalInputKeys)
+            ? contract.externalInputKeys
             : Array.isArray(contract.inputKeys)
               ? contract.inputKeys
               : [];
-        if (contractKeys.length === 0) return node;
+          const applicable = Object.entries(values).filter(
+            ([key, value]) => declared.includes(key) && value.trim() !== '',
+          );
+          if (applicable.length === 0) return node;
 
-        const mergedInitial = {
-          ...(node.data?.initialState || {}),
-          ...Object.fromEntries(
-            Object.entries(updatedInitialState).filter(([key]) => contractKeys.includes(key)),
-          ),
-        };
+          const nextData = { ...node.data };
+          const nextInitial = { ...(node.data.initialState || {}) };
+          for (const [key, value] of applicable) {
+            nextData[key] = value.trim();
+            nextInitial[key] = value.trim();
+          }
+          nextData.initialState = nextInitial;
+          return { ...node, data: nextData };
+        }),
+      );
+    },
+    [setNodes],
+  );
 
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            initialState: mergedInitial,
-          },
-        };
-      }),
-    );
+  /**
+   * Gate a run on its required inputs.
+   *
+   * When something is still missing, open the inline collector in the chat
+   * panel (friendly form + Run button) instead of a stack of blocking
+   * window.prompt dialogs, and return false so this run attempt stops — the
+   * collector's own button restarts it once the values are in.
+   */
+  const collectRequiredInputsBeforeExecution = useCallback(() => {
+    const missing = missingRequiredInputs(nodes as unknown as WorkflowNodeModel[]);
+    if (missing.length === 0) return true;
 
-    return true;
-  }, [nodes, setNodes]);
+    setPendingInputs(missing);
+    setPendingInputValues(Object.fromEntries(missing.map((input) => [input.key, input.value])));
+    setShowChatPanel(true);
+    updateActiveTaskMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        text:
+          `Before I can run this, I need ${missing.length === 1 ? 'a value' : `${missing.length} values`} ` +
+          `nothing in the workflow produces: ${missing.map((i) => `"${i.label}"`).join(', ')}. ` +
+          `Fill ${missing.length === 1 ? 'it' : 'them'} in below and I'll run it.`,
+      },
+    ]);
+    return false;
+  }, [nodes, updateActiveTaskMessages]);
+
+  /**
+   * Submit the inline input form: write the values onto the nodes, echo the
+   * user's answers into the chat, and request a run. The run itself is fired by
+   * an effect once the node update has flushed (see `runRequestToken`), so the
+   * executor's pre-flight sees the freshly-written values rather than racing
+   * the setNodes above.
+   */
+  const submitPendingInputs = useCallback(() => {
+    if (!pendingInputs) return;
+    const hasBlank = pendingInputs.some((input) => !(pendingInputValues[input.key] ?? '').trim());
+    if (hasBlank) return; // Run button is disabled in this state anyway.
+
+    const values: Record<string, string> = {};
+    for (const input of pendingInputs) values[input.key] = pendingInputValues[input.key].trim();
+
+    writeInputsToNodes(values);
+    updateActiveTaskMessages((prev) => [
+      ...prev,
+      {
+        role: 'user',
+        text: pendingInputs.map((input) => `${input.label}: ${values[input.key]}`).join('\n'),
+      },
+    ]);
+    setPendingInputs(null);
+    setPendingInputValues({});
+    setRunRequestToken((token) => token + 1);
+  }, [pendingInputs, pendingInputValues, writeInputsToNodes, updateActiveTaskMessages]);
 
   const handleExecuteFlow = async () => {
     const hasAllInputs = collectRequiredInputsBeforeExecution();
@@ -1578,6 +1579,17 @@ export function WorkflowCanvas() {
       });
     }
   };
+
+  // Fire the run once the inline input collector's values have been written to
+  // the nodes. Keyed on a token (not on nodes) so it runs exactly once per
+  // submit, after the setNodes flush, so the executor sees the fresh values.
+  useEffect(() => {
+    if (runRequestToken === 0) return;
+    void handleExecuteFlow();
+    // handleExecuteFlow is intentionally omitted: it is redefined every render
+    // and reads current state; the token is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runRequestToken]);
 
   const downloadOutput = (content: string, filename: string) => {
     const blob = new Blob([content], { type: 'text/plain' });
@@ -2838,6 +2850,76 @@ export function WorkflowCanvas() {
                       className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
                     >
                       Discard
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline collector for the values a run needs but does not have.
+                  Replaces a stack of blocking window.prompt dialogs. */}
+              {pendingInputs && pendingInputs.length > 0 && (
+                <div
+                  data-testid="pending-inputs"
+                  className="rounded-2xl border border-bolt-accent/30 bg-bolt-accent/10 p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-bolt-accent">
+                    Fill in to run
+                  </p>
+                  <div className="mt-2 space-y-3">
+                    {pendingInputs.map((input) => (
+                      <div key={input.key}>
+                        <label className="mb-1 block text-[11px] font-medium text-white/70">
+                          {input.label}
+                          <span className="ml-1.5 text-[9px] font-normal text-white/35">
+                            for {input.nodeLabel}
+                          </span>
+                        </label>
+                        <input
+                          type="text"
+                          autoFocus={input === pendingInputs[0]}
+                          value={pendingInputValues[input.key] ?? ''}
+                          aria-label={`${input.label} value`}
+                          placeholder={`Enter ${input.label}…`}
+                          onChange={(e) =>
+                            setPendingInputValues((prev) => ({
+                              ...prev,
+                              [input.key]: e.target.value,
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              submitPendingInputs();
+                            }
+                          }}
+                          className="w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[12px] text-white outline-none focus:border-bolt-accent/50"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={submitPendingInputs}
+                      disabled={pendingInputs.some(
+                        (input) => !(pendingInputValues[input.key] ?? '').trim(),
+                      )}
+                      className="flex items-center gap-1.5 rounded-lg bg-bolt-accent px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-bolt-accent/90 disabled:opacity-40"
+                    >
+                      <Play className="w-3 h-3 fill-black" />
+                      Run with these
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPendingInputs(null);
+                        setPendingInputValues({});
+                        updateActiveTaskMessages((prev) => [
+                          ...prev,
+                          { role: 'assistant', text: 'Okay, I did not run it.' },
+                        ]);
+                      }}
+                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                    >
+                      Cancel
                     </button>
                   </div>
                 </div>

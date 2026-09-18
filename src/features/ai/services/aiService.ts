@@ -30,12 +30,14 @@ import '@features/tools/connectors';
 /**
  * Provider to request for a node call.
  *
- * 'auto' — so the SERVER's AI_PROVIDER decides. The client config hardcodes
- * 'openrouter', which was overriding the operator's server-side choice: a
- * workflow ran on OpenRouter's 128K-token model even when the server was set to
- * Gemini (1M tokens), so a large page hit a context limit it would not have hit
- * on the configured provider. Deferring to the server fixes that and keeps the
- * key handling server-side.
+ * 'auto' — so the SERVER's AI_PROVIDER decides which provider runs the node.
+ * The client config hardcodes 'openrouter', which was overriding the operator's
+ * server-side choice: a workflow ran on OpenRouter's 128K-token model even when
+ * the server was set to Gemini (1M tokens), so a large page hit a context limit
+ * it would not have hit on the configured provider. Deferring to the server —
+ * combined with AI_ALLOW_CLIENT_PROVIDER_OVERRIDE=false — makes the server's
+ * AI_PROVIDER the single source of truth, so node execution never silently
+ * falls back to OpenRouter. Key handling stays server-side.
  */
 function configuredProvider(): 'ollama' | 'gemini' | 'openrouter' | 'auto' {
   return 'auto';

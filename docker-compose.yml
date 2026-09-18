@@ -77,6 +77,9 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       DB_NAME: ${DB_NAME:-autoagent}
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      # Make the server's AI_PROVIDER the single source of truth: the browser
+      # cannot switch the node provider (e.g. force OpenRouter). Default false.
+      AI_ALLOW_CLIENT_PROVIDER_OVERRIDE: ${AI_ALLOW_CLIENT_PROVIDER_OVERRIDE:-false}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

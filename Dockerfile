@@ -41,9 +41,23 @@ RUN npm ci --omit=dev && npm cache clean --force
 # the browser and its OS libraries here so the toggle works without a rebuild.
 # Browsers go to a world-readable path so the unprivileged `node` user can
 # launch them; the install itself needs root for the apt system libraries.
+#
+# The install is BEST-EFFORT and retried: the browser binary is a large
+# download and the build network is sometimes flaky. If it ultimately fails the
+# image still builds — the render tier imports Playwright lazily and degrades to
+# the plain fetch when Chromium is absent, so the only cost of a failed download
+# is that JavaScript rendering is unavailable until the image is rebuilt.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx playwright install --with-deps chromium \
-  && chmod -R a+rx /ms-playwright
+# The OS libraries Chromium needs; installed separately so an apt failure and a
+# browser-download failure are distinguishable, and this layer caches.
+RUN npx playwright install-deps chromium || echo "WARNING: playwright OS deps did not install; rendering may not work"
+RUN for attempt in 1 2 3; do \
+      npx playwright install chromium && break; \
+      echo "playwright chromium download attempt $attempt failed; retrying"; \
+      sleep 5; \
+    done; \
+    if [ -d /ms-playwright ]; then chmod -R a+rx /ms-playwright; \
+    else echo "WARNING: Chromium was not installed; JavaScript rendering will be unavailable"; fi
 
 # The server, and the frontend built in the previous stage.
 COPY server ./server

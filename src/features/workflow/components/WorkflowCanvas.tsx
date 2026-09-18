@@ -697,6 +697,8 @@ export function WorkflowCanvas() {
     goTo: goToVersion,
   } = useWorkflowVersions();
   const [showVersionMenu, setShowVersionMenu] = useState(false);
+  /** The version picker shown in the chat footer (distinct from the toolbar one). */
+  const [showChatVersions, setShowChatVersions] = useState(false);
 
   // Offer to resume a saved run — in the CHAT, not a native popup. Fires once
   // per mount when a resumable checkpoint exists; the operator answers with the
@@ -3535,6 +3537,46 @@ export function WorkflowCanvas() {
           </div>
 
           <div className="border-t border-white/10 p-3">
+            {/* Version picker, opened by the "Versions" button below. Lists the
+                labeled snapshots each chat patch produced; clicking one restores
+                the whole workflow to that version. */}
+            {showChatVersions && versions.length > 0 && (
+              <div className="mb-3 max-h-52 overflow-y-auto rounded-2xl border border-white/10 bg-black/40 p-2">
+                <p className="px-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white/40">
+                  Workflow versions
+                </p>
+                {versions
+                  .map((v, i) => ({ v, i }))
+                  .reverse()
+                  .map(({ v, i }) => (
+                    <button
+                      key={v.id}
+                      onClick={() => {
+                        switchToVersion(i);
+                        setShowChatVersions(false);
+                      }}
+                      className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-white/5 ${
+                        i === versionIndex ? 'bg-white/[0.06]' : ''
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-bolt-accent">
+                        {v.label}
+                        {i === versionIndex && (
+                          <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] text-bolt-accent">
+                            current
+                          </span>
+                        )}
+                        <span className="font-normal normal-case text-white/30">
+                          {new Date(v.at).toLocaleTimeString()}
+                        </span>
+                      </span>
+                      <span className="line-clamp-2 text-[10px] leading-4 text-white/55">
+                        {v.summary}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            )}
             <textarea
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
@@ -3552,14 +3594,34 @@ export function WorkflowCanvas() {
               {/* Always-available way to change an input value (e.g. a bad URL)
                   and re-run, straight from the chat — even after a run that
                   "passed" but scraped the wrong thing. */}
-              <button
-                onClick={openInputEditor}
-                disabled={isPatching || isExecuting || nodes.length === 0}
-                className="px-2.5 py-2 rounded-xl border border-white/10 bg-white/5 text-white/70 text-[10px] font-bold uppercase tracking-[0.16em] hover:bg-white/10 hover:text-white disabled:opacity-30"
-                title="Change a workflow input (like the URL) and re-run"
-              >
-                Change inputs
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openInputEditor}
+                  disabled={isPatching || isExecuting || nodes.length === 0}
+                  className="px-2.5 py-2 rounded-xl border border-white/10 bg-white/5 text-white/70 text-[10px] font-bold uppercase tracking-[0.16em] hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  title="Change a workflow input (like the URL) and re-run"
+                >
+                  Change inputs
+                </button>
+                {/* Version control right beside Change inputs: open the list of
+                    saved versions and restore any one. Hidden until a chat patch
+                    has produced at least one version. */}
+                <button
+                  onClick={() => setShowChatVersions((open) => !open)}
+                  disabled={versions.length === 0}
+                  className={`flex items-center gap-1 px-2.5 py-2 rounded-xl border text-[10px] font-bold uppercase tracking-[0.16em] disabled:opacity-30 ${
+                    showChatVersions
+                      ? 'border-bolt-accent/40 bg-bolt-accent/10 text-bolt-accent'
+                      : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Browse and restore workflow versions"
+                >
+                  <History className="w-3 h-3" />
+                  {versions.length > 0
+                    ? `${versions[versionIndex]?.label ?? `v${versions.length}`} / ${versions.length}`
+                    : 'Versions'}
+                </button>
+              </div>
               <button
                 onClick={handleWorkflowChatSubmit}
                 disabled={isPatching}

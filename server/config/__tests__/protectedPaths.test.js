@@ -61,6 +61,7 @@ describe('protected paths', () => {
       'fetch/routes.js',
       'oauth/routes.js',
       'google/routes.js',
+      'whatsapp/bridge.js',
     ];
     const registered = new Set();
 

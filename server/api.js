@@ -1,15 +1,10 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import { z } from 'zod';
-import QRCode from 'qrcode';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { setupWorkflowRoutes } from './workflows/routes.js';
 import { setupFetchRoutes } from './fetch/routes.js';
 import { setupOAuthRoutes } from './oauth/routes.js';
 import { setupGoogleRoutes } from './google/routes.js';
+import { setupWhatsAppBridge, setupWhatsAppDisabled } from './whatsapp/bridge.js';
 import {
   closePool,
   ensureDatabaseExists,
@@ -30,16 +25,7 @@ import {
   errorHandler,
 } from './middleware/security.js';
 import { requireSession, setupAuthRoutes } from './auth/session.js';
-import {
-  AI_PATHS,
-  CONNECTOR_PATHS,
-  FETCH_PATHS,
-  WHATSAPP_PATHS,
-  WORKFLOW_PATHS,
-} from './config/protectedPaths.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { AI_PATHS, CONNECTOR_PATHS, FETCH_PATHS, WORKFLOW_PATHS } from './config/protectedPaths.js';
 
 const app = express();
 const PORT = env.PORT;
@@ -147,59 +133,6 @@ async function reportAiConfiguration() {
   }
 }
 
-let sock;
-let qrCodeData = null;
-let connectionStatus = 'disconnected';
-let lastDisconnectReason = null;
-
-// Ensure auth directory exists
-const AUTH_DIR = path.join(__dirname, '.wa-auth');
-if (!fs.existsSync(AUTH_DIR)) {
-  fs.mkdirSync(AUTH_DIR, { recursive: true });
-}
-
-// Simple in-memory store for recent incoming messages demonstration
-const recentMessages = [];
-
-/**
- * Outbound message payload.
- *
- * `mediaUrl` is restricted to http/https. A local path, `file://`, or any other
- * scheme is rejected outright — the old handler resolved such values against the
- * filesystem and returned their contents.
- */
-const sendMessageSchema = z
-  .object({
-    to: z.string().min(1).max(64),
-    text: z.string().max(4096).optional(),
-    mediaUrl: z
-      .string()
-      .max(2048)
-      .refine((value) => {
-        let parsed;
-        try {
-          parsed = new URL(value);
-        } catch {
-          return false;
-        }
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-      }, 'mediaUrl must be an absolute http(s) URL')
-      .optional(),
-    mediaType: z.string().max(64).optional(),
-  })
-  .refine((body) => Boolean(body.text) || Boolean(body.mediaUrl), {
-    message: 'Provide "text", "mediaUrl", or both.',
-  });
-
-/** Host only, for logs: a full media URL can carry a signed token in the query. */
-function safeHost(url) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return 'invalid-url';
-  }
-}
-
 /**
  * Prepare the database before serving traffic.
  *
@@ -242,266 +175,23 @@ async function startServer() {
     return;
   }
 
-  // Shared state
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-
-  const startSock = async () => {
-    sock = makeWASocket({
-      // Removed .default as per successful import logic
-      auth: state,
-      syncFullHistory: false, // keep it light
-      // implement a basic msg retry handler if needed
-    });
-
-    sock.ev.on('connection.update', (update) => {
-      const { connection, lastDisconnect, qr } = update;
-      if (qr) {
-        QRCode.toDataURL(qr, (err, url) => {
-          if (!err) {
-            qrCodeData = url;
-            connectionStatus = 'scan_qr';
-          }
-        });
-        QRCode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
-          // Printed raw: an ASCII QR code is unreadable through a
-          // structured logger, and operators scan this from the console.
-          if (!err) process.stdout.write(`${url}\n`);
-        });
-      }
-      if (connection === 'close') {
-        const shouldReconnect =
-          lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        logger.warn({ shouldReconnect }, 'WhatsApp connection closed');
-        connectionStatus = 'disconnected';
-        lastDisconnectReason = lastDisconnect?.error?.message;
-
-        if (shouldReconnect) {
-          setTimeout(startSock, 2000);
-        } else {
-          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-          setTimeout(startSock, 1000);
-        }
-      } else if (connection === 'open') {
-        logger.info('WhatsApp connected');
-        connectionStatus = 'connected';
-        qrCodeData = null;
-      }
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-    // Simple message listener to populate a volatile 'recentMessages' list for testing
-    sock.ev.on('messages.upsert', async (m) => {
-      if (m.type === 'notify') {
-        for (const msg of m.messages) {
-          if (!msg.message) continue;
-          // Extract text
-          const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-          const from = msg.key.remoteJid;
-          const pushName = msg.pushName;
-
-          recentMessages.unshift({
-            id: msg.key.id,
-            from,
-            pushName,
-            text,
-            timestamp: msg.messageTimestamp,
-            fromMe: msg.key.fromMe,
-          });
-
-          // Keep list small
-          if (recentMessages.length > 50) recentMessages.pop();
-        }
-      }
-    });
-  };
-
-  await startSock();
-
-  // ---- WhatsApp bridge endpoints ----
-  // All of these are session-gated. Before this, anyone who could reach the
-  // port could send messages from the linked account (/send), read recent
-  // messages (/messages), or wipe its credentials (/disconnect).
-  app.use(WHATSAPP_PATHS, limiters.general, requireSession);
-
-  app.get('/status', (req, res) =>
-    res.json({
-      status: connectionStatus,
-      user: sock?.user,
-      lastDisconnectReason,
-      qrAvailable: !!qrCodeData,
-      qrUrl: qrCodeData ? '/qr' : null,
-    }),
-  );
-
-  app.get('/qr', (req, res) => {
-    if (connectionStatus === 'connected') {
-      if (req.accepts('html')) {
-        return res.send(`
-                    <html lang="en">
-                        <head>
-                            <meta charset="UTF-8" />
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                            <title>WhatsApp QR Code</title>
-                            <style>
-                                body { background: #050505; color: #fff; font-family: Inter, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-                                .card { background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; padding: 32px; max-width: 420px; width: 100%; text-align: center; }
-                                .status { margin-bottom: 18px; color: #34d399; font-weight: 700; }
-                                .hint { color: #cbd5e1; margin-top: 14px; font-size: 0.95rem; }
-                                .refresh { margin-top: 20px; display: inline-flex; gap: 8px; align-items: center; padding: 12px 18px; border-radius: 999px; background: rgba(255,255,255,0.08); color: #fff; text-decoration: none; font-weight: 600; }
-                            </style>
-                        </head>
-                        <body>
-                            <div class="card">
-                                <div class="status">WhatsApp already connected</div>
-                                <div class="hint">If you want to switch devices, logout or disconnect from the API and scan again.</div>
-                                <a class="refresh" href="/qr">Refresh status</a>
-                            </div>
-                        </body>
-                    </html>
-                `);
-      }
-      return res.status(400).json({ error: 'Connected' });
-    }
-
-    if (!qrCodeData) {
-      if (req.accepts('html')) {
-        return res.send(`
-                    <html lang="en">
-                        <head>
-                            <meta charset="UTF-8" />
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                            <title>WhatsApp QR Code</title>
-                            <style>
-                                body { background: #050505; color: #fff; font-family: Inter, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-                                .card { background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; padding: 32px; max-width: 420px; width: 100%; text-align: center; }
-                                .status { margin-bottom: 18px; color: #fbbf24; font-weight: 700; }
-                                .hint { color: #cbd5e1; margin-top: 14px; font-size: 0.95rem; }
-                                .refresh { margin-top: 20px; display: inline-flex; gap: 8px; align-items: center; padding: 12px 18px; border-radius: 999px; background: rgba(255,255,255,0.08); color: #fff; text-decoration: none; font-weight: 600; }
-                            </style>
-                        </head>
-                        <body>
-                            <div class="card">
-                                <div class="status">Waiting for QR code...</div>
-                                <div class="hint">The bridge is initializing. Reload this page after a moment.</div>
-                                <a class="refresh" href="/qr">Refresh</a>
-                            </div>
-                        </body>
-                    </html>
-                `);
-      }
-      return res.status(503).json({ error: 'Generating QR...' });
-    }
-
-    if (req.accepts('html')) {
-      return res.send(`
-                <html lang="en">
-                    <head>
-                        <meta charset="UTF-8" />
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                        <title>WhatsApp QR Code</title>
-                        <style>
-                            body { background: #050505; color: #fff; font-family: Inter, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-                            .card { background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; padding: 32px; max-width: 420px; width: 100%; text-align: center; }
-                            .title { font-size: 1.2rem; font-weight: 700; margin-bottom: 20px; }
-                            .hint { color: #cbd5e1; margin-top: 16px; font-size: 0.95rem; }
-                            .refresh { margin-top: 20px; display: inline-flex; gap: 8px; align-items: center; padding: 12px 18px; border-radius: 999px; background: rgba(255,255,255,0.08); color: #fff; text-decoration: none; font-weight: 600; }
-                            img { max-width: 100%; height: auto; border-radius: 20px; background: #fff; padding: 16px; }
-                            .footer { margin-top: 18px; color: #94a3b8; font-size: 0.9rem; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="card">
-                            <div class="title">Scan this QR code with WhatsApp</div>
-                            <img src="${qrCodeData}" alt="WhatsApp QR Code" />
-                            <div class="hint">Open WhatsApp → Linked Devices → Link a Device → Scan QR.</div>
-                            <div class="footer">Reload if the code expires.</div>
-                            <a class="refresh" href="/qr">Refresh</a>
-                        </div>
-                    </body>
-                </html>
-            `);
-    }
-
-    res.json({ qr: qrCodeData });
-  });
-
-  app.post('/send', limiters.send, async (req, res) => {
-    // Validate before checking connectivity: a malformed or hostile payload
-    // should be rejected on its own merits, not incidentally masked by the
-    // bridge happening to be offline.
-    const parsed = sendMessageSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        message: 'Provide "to" plus "text" and/or an http(s) "mediaUrl".',
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-      });
-    }
-    const { to, text, mediaUrl, mediaType } = parsed.data;
-
-    if (connectionStatus !== 'connected') {
-      return res.status(503).json({
-        error: 'bridge_not_connected',
-        message: 'The WhatsApp bridge is not connected.',
-      });
-    }
-
+  // WhatsApp bridge is opt-in (Task 17). When off, Baileys never starts — no
+  // linked-device socket, no console QR, no forever-retrying connection log
+  // spam — and the endpoints answer with a clear "disabled" instead of 404 so
+  // the frontend degrades cleanly. Enable with WHATSAPP_ENABLED=true.
+  if (env.WHATSAPP_ENABLED) {
     try {
-      const jid = to.includes('@s.whatsapp.net') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
-
-      if (mediaUrl) {
-        // Normalize mediaType: "image/jpg" -> "image", "video/mp4" -> "video", etc.
-        let rawType = (mediaType || 'image').toString().toLowerCase().trim();
-        if (rawType.includes('/')) rawType = rawType.split('/')[0];
-        // Map to Baileys-supported keys
-        const typeMap = { image: 'image', video: 'video', audio: 'audio', document: 'document' };
-        const type = typeMap[rawType] || 'image';
-
-        logger.info({ type, host: safeHost(mediaUrl) }, 'sending WhatsApp media');
-
-        // Only remote http(s) media is accepted.
-        //
-        // The previous implementation fell back to treating mediaUrl as a
-        // filesystem path and read it with path.resolve + readFileSync,
-        // which let any caller exfiltrate arbitrary server files. It also
-        // used CommonJS require() inside this ES module, so that branch
-        // threw at runtime regardless. Both are gone; the schema rejects
-        // anything that is not an http(s) URL.
-        await sock.sendMessage(jid, { [type]: { url: mediaUrl }, caption: text || '' });
-      } else {
-        // Send text only
-        await sock.sendMessage(jid, { text });
-      }
-
-      res.json({ success: true, to: jid });
-    } catch (e) {
-      logger.error({ err: e }, 'WhatsApp send failed');
-      res.status(500).json({ error: 'send_failed', message: 'Could not send the message.' });
+      await setupWhatsAppBridge(app, { limiters });
+    } catch (err) {
+      // A bridge that fails to initialise must not take the whole API down; the
+      // rest of the app has nothing to do with WhatsApp. Fall back to the
+      // disabled stubs so the routes still answer.
+      logger.error({ err }, 'WhatsApp bridge failed to start; serving disabled stubs');
+      setupWhatsAppDisabled(app, { limiters });
     }
-  });
-
-  app.get('/messages', (req, res) => {
-    // Return in-memory recent messages
-    // Optional filter: ?jid=...
-    const { jid } = req.query;
-    let msgs = recentMessages;
-    if (jid) {
-      msgs = msgs.filter((m) => m.from === jid || (m.fromMe && jid === sock?.user?.id)); // loose filter
-    }
-    res.json({ messages: msgs.slice(0, 20) });
-  });
-
-  app.post('/disconnect', async (req, res) => {
-    try {
-      await sock.logout();
-      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-      res.json({ success: true });
-      // The connection.close handler will likely restart the socket logic to generate a new QR
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+  } else {
+    setupWhatsAppDisabled(app, { limiters });
+  }
 
   // Terminal error handler. Registered last so it sees errors from every
   // route and from CORS rejections.

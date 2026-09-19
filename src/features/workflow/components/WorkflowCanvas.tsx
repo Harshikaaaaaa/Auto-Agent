@@ -199,6 +199,9 @@ export function WorkflowCanvas() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  /** The reusable-nodes picker modal, opened from the sidebar button. */
+  const [showReusableModal, setShowReusableModal] = useState(false);
+  const [reusableSearch, setReusableSearch] = useState('');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2135,39 +2138,19 @@ export function WorkflowCanvas() {
               <span className="text-xs font-semibold">Run History</span>
             </button>
 
-            <div className="pt-2 border-t border-white/5 mt-2">
-              <p className="px-2 text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">
-                Reusable Nodes
-              </p>
-              <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                {reusableNodes.map((template) => (
-                  <button
-                    key={template.id || `${template.toolId}-${template.toolAction}`}
-                    onClick={() =>
-                      addReusableNode({
-                        label: template.label,
-                        description: template.description,
-                        nodeType: template.nodeType,
-                        ...(template.toolId ? { toolId: template.toolId } : {}),
-                        ...(template.toolAction ? { toolAction: template.toolAction } : {}),
-                        ...(template.stateContract
-                          ? { stateContract: template.stateContract }
-                          : {}),
-                      })
-                    }
-                    className="w-full rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5 text-left transition hover:bg-white/5"
-                    title={template.description}
-                  >
-                    <div className="text-[10px] font-medium text-white/75 truncate">
-                      {template.label}
-                    </div>
-                    <div className="text-[9px] text-white/35 truncate">
-                      {template.toolName || 'Logic / Helper'}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Reusable Nodes is a single button that opens a picker modal,
+                instead of a long inline list crowding the sidebar. */}
+            <button
+              onClick={() => {
+                setReusableSearch('');
+                setShowReusableModal(true);
+              }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-white/40 hover:text-white hover:bg-white/5"
+            >
+              <Box className="w-4 h-4" />
+              <span className="text-xs font-semibold">Reusable Nodes</span>
+              <span className="ml-auto text-[10px] text-white/30">{reusableNodes.length}</span>
+            </button>
 
             {savedList.length > 0 && (
               <div className="mt-4 pt-4 border-t border-white/5">
@@ -2555,6 +2538,86 @@ export function WorkflowCanvas() {
           </div>
         )}
 
+        {/* Reusable Nodes picker — opened from the sidebar button. A modal grid
+            so the sidebar stays compact; clicking a node adds it and closes. */}
+        {showReusableModal && (
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-[#050505]/80 backdrop-blur-md"
+            onClick={() => setShowReusableModal(false)}
+          >
+            <div
+              className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-3xl border border-white/10 bg-[#0c0c0c] shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+                <div>
+                  <h2 className="text-base font-bold text-white">Reusable Nodes</h2>
+                  <p className="text-xs text-white/45 mt-0.5">
+                    Pick a starting block to add to the canvas.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowReusableModal(false)}
+                  className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/5"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-6 py-3 border-b border-white/10">
+                <input
+                  type="text"
+                  autoFocus
+                  value={reusableSearch}
+                  onChange={(e) => setReusableSearch(e.target.value)}
+                  placeholder="Filter nodes…"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/30 outline-none focus:border-bolt-accent/40"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="grid grid-cols-2 gap-2">
+                  {reusableNodes
+                    .filter((template) => {
+                      const q = reusableSearch.toLowerCase().trim();
+                      if (!q) return true;
+                      return (
+                        template.label.toLowerCase().includes(q) ||
+                        (template.toolName || '').toLowerCase().includes(q) ||
+                        (template.description || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((template) => (
+                      <button
+                        key={template.id || `${template.toolId}-${template.toolAction}`}
+                        onClick={() => {
+                          addReusableNode({
+                            label: template.label,
+                            description: template.description,
+                            nodeType: template.nodeType,
+                            ...(template.toolId ? { toolId: template.toolId } : {}),
+                            ...(template.toolAction ? { toolAction: template.toolAction } : {}),
+                            ...(template.stateContract
+                              ? { stateContract: template.stateContract }
+                              : {}),
+                          });
+                          setShowReusableModal(false);
+                        }}
+                        className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 text-left transition hover:bg-white/5 hover:border-white/15"
+                        title={template.description}
+                      >
+                        <div className="text-xs font-semibold text-white/85 truncate">
+                          {template.label}
+                        </div>
+                        <div className="text-[10px] text-white/40 truncate mt-0.5">
+                          {template.toolName || 'Logic / Helper'}
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 10-Framework Workflow Code Export Modal. Only mounted while
                     open so its lazy chunk (jszip + code generators) is fetched
                     on demand, not at page load. */}
@@ -2571,183 +2634,189 @@ export function WorkflowCanvas() {
           </Suspense>
         )}
 
-        <header className="absolute top-0 right-0 z-30 px-5 py-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowChatPanel(!showChatPanel)}
-              className="px-3 py-2 text-white/60 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
-            >
-              Chat
-            </button>
-            {!sidebarOpen && (
+        {/* The toolbar (Chat/Tasks/Clear/Save/Export/Run Flow) is hidden on the
+            empty home screen: there is nothing to save/export/run yet, and the
+            splash's translucent blur was showing the buttons through faintly.
+            It appears once a workflow is on the canvas. */}
+        {!showSplash && (
+          <header className="absolute top-0 right-0 z-30 px-5 py-4 shrink-0">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setSidebarOpen(true)}
+                onClick={() => setShowChatPanel(!showChatPanel)}
                 className="px-3 py-2 text-white/60 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
               >
-                Tasks
+                Chat
               </button>
-            )}
-            <button
-              onClick={handleClear}
-              className="px-3 py-2 text-white/40 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
-            >
-              Clear
-            </button>
-            <div className="flex items-center gap-1 border-r border-white/10 pr-3">
+              {!sidebarOpen && (
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="px-3 py-2 text-white/60 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
+                >
+                  Tasks
+                </button>
+              )}
               <button
-                onClick={undo}
-                disabled={!canUndo}
-                title="Undo (⌘Z)"
-                className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                onClick={handleClear}
+                className="px-3 py-2 text-white/40 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
               >
-                <Undo2 className="w-3.5 h-3.5" />
+                Clear
               </button>
+              <div className="flex items-center gap-1 border-r border-white/10 pr-3">
+                <button
+                  onClick={undo}
+                  disabled={!canUndo}
+                  title="Undo (⌘Z)"
+                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={redo}
+                  disabled={!canRedo}
+                  title="Redo (⌘⇧Z)"
+                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                >
+                  <Redo2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {/* Version switcher: step between the labeled snapshots each chat
+                patch produces. Hidden until at least one version exists. */}
+              {versions.length > 0 && (
+                <div className="relative flex items-center gap-1 border-r border-white/10 pr-3">
+                  <button
+                    onClick={() => switchToVersion(versionIndex - 1)}
+                    disabled={!canGoBackVersion}
+                    title="Previous version"
+                    className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setShowVersionMenu((open) => !open)}
+                    title="Workflow versions"
+                    className="flex items-center gap-1 px-1.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/60 hover:text-white"
+                  >
+                    <History className="w-3 h-3" />
+                    {versions[versionIndex]?.label ?? `v${versions.length}`}
+                    <span className="text-white/30">/ {versions.length}</span>
+                  </button>
+                  <button
+                    onClick={() => switchToVersion(versionIndex + 1)}
+                    disabled={!canGoForwardVersion}
+                    title="Next version"
+                    className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  {showVersionMenu && (
+                    <div className="absolute right-0 top-full z-50 mt-2 w-64 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0d0d0d] p-1.5 shadow-2xl">
+                      {versions
+                        .map((v, i) => ({ v, i }))
+                        .reverse()
+                        .map(({ v, i }) => (
+                          <button
+                            key={v.id}
+                            onClick={() => switchToVersion(i)}
+                            className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-white/5 ${
+                              i === versionIndex ? 'bg-white/[0.06]' : ''
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-bolt-accent">
+                              {v.label}
+                              {i === versionIndex && (
+                                <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] text-bolt-accent">
+                                  current
+                                </span>
+                              )}
+                            </span>
+                            <span className="line-clamp-2 text-[10px] leading-4 text-white/60">
+                              {v.summary}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {showSaveDialog ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={workflowName}
+                    onChange={(e) => setWorkflowName(e.target.value)}
+                    placeholder="Workflow name…"
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-bolt-accent/40 w-40"
+                    onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSave}
+                    disabled={!workflowName.trim()}
+                    className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-all disabled:opacity-30"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setShowSaveDialog(false)}
+                    className="p-2 text-white/40 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowSaveDialog(true)}
+                  disabled={nodes.length === 0}
+                  className="flex items-center gap-1.5 px-3 py-2 text-white/40 hover:text-white transition-colors text-xs font-bold disabled:opacity-20"
+                >
+                  <Save className="w-3.5 h-3.5" /> Save
+                </button>
+              )}
               <button
-                onClick={redo}
-                disabled={!canRedo}
-                title="Redo (⌘⇧Z)"
-                className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
+                onClick={() => setShowExportModal(true)}
+                disabled={nodes.length === 0}
+                className="flex items-center gap-1.5 px-3 py-2 text-white/60 hover:text-white transition-colors text-xs font-bold disabled:opacity-20 border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm hover:bg-white/5"
+                title="Export workflow into 10 Python agent frameworks"
               >
-                <Redo2 className="w-3.5 h-3.5" />
+                <Download className="w-3.5 h-3.5 text-bolt-accent" /> Export
+              </button>
+              {isExecuting && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={pauseExecution}
+                    className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
+                  >
+                    Pause
+                  </button>
+                  <button
+                    onClick={resumeExecution}
+                    className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
+                  >
+                    Resume
+                  </button>
+                  <button
+                    onClick={cancelExecution}
+                    className="px-3 py-2 border border-red-500/30 bg-red-500/10 text-red-300 rounded-xl text-[10px] font-bold hover:bg-red-500/20"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={handleExecuteFlow}
+                disabled={nodes.length === 0 || isExecuting}
+                className="flex items-center gap-2 px-5 py-2.5 bg-bolt-accent text-black rounded-xl text-xs font-bold shadow-2xl hover:bg-bolt-accent/90 transition-all"
+              >
+                {isExecuting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 fill-black" />
+                )}
+                {runtimeStatus === 'paused' ? 'Resume' : 'Run Flow'}
               </button>
             </div>
-            {/* Version switcher: step between the labeled snapshots each chat
-                patch produces. Hidden until at least one version exists. */}
-            {versions.length > 0 && (
-              <div className="relative flex items-center gap-1 border-r border-white/10 pr-3">
-                <button
-                  onClick={() => switchToVersion(versionIndex - 1)}
-                  disabled={!canGoBackVersion}
-                  title="Previous version"
-                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setShowVersionMenu((open) => !open)}
-                  title="Workflow versions"
-                  className="flex items-center gap-1 px-1.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/60 hover:text-white"
-                >
-                  <History className="w-3 h-3" />
-                  {versions[versionIndex]?.label ?? `v${versions.length}`}
-                  <span className="text-white/30">/ {versions.length}</span>
-                </button>
-                <button
-                  onClick={() => switchToVersion(versionIndex + 1)}
-                  disabled={!canGoForwardVersion}
-                  title="Next version"
-                  className="p-1.5 text-white/30 hover:text-white disabled:opacity-20 transition-all"
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-                {showVersionMenu && (
-                  <div className="absolute right-0 top-full z-50 mt-2 w-64 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0d0d0d] p-1.5 shadow-2xl">
-                    {versions
-                      .map((v, i) => ({ v, i }))
-                      .reverse()
-                      .map(({ v, i }) => (
-                        <button
-                          key={v.id}
-                          onClick={() => switchToVersion(i)}
-                          className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-white/5 ${
-                            i === versionIndex ? 'bg-white/[0.06]' : ''
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-bolt-accent">
-                            {v.label}
-                            {i === versionIndex && (
-                              <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] text-bolt-accent">
-                                current
-                              </span>
-                            )}
-                          </span>
-                          <span className="line-clamp-2 text-[10px] leading-4 text-white/60">
-                            {v.summary}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {showSaveDialog ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={workflowName}
-                  onChange={(e) => setWorkflowName(e.target.value)}
-                  placeholder="Workflow name…"
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-bolt-accent/40 w-40"
-                  onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                  autoFocus
-                />
-                <button
-                  onClick={handleSave}
-                  disabled={!workflowName.trim()}
-                  className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-all disabled:opacity-30"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setShowSaveDialog(false)}
-                  className="p-2 text-white/40 hover:text-white"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowSaveDialog(true)}
-                disabled={nodes.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 text-white/40 hover:text-white transition-colors text-xs font-bold disabled:opacity-20"
-              >
-                <Save className="w-3.5 h-3.5" /> Save
-              </button>
-            )}
-            <button
-              onClick={() => setShowExportModal(true)}
-              disabled={nodes.length === 0}
-              className="flex items-center gap-1.5 px-3 py-2 text-white/60 hover:text-white transition-colors text-xs font-bold disabled:opacity-20 border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm hover:bg-white/5"
-              title="Export workflow into 10 Python agent frameworks"
-            >
-              <Download className="w-3.5 h-3.5 text-bolt-accent" /> Export
-            </button>
-            {isExecuting && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={pauseExecution}
-                  className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
-                >
-                  Pause
-                </button>
-                <button
-                  onClick={resumeExecution}
-                  className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
-                >
-                  Resume
-                </button>
-                <button
-                  onClick={cancelExecution}
-                  className="px-3 py-2 border border-red-500/30 bg-red-500/10 text-red-300 rounded-xl text-[10px] font-bold hover:bg-red-500/20"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-            <button
-              onClick={handleExecuteFlow}
-              disabled={nodes.length === 0 || isExecuting}
-              className="flex items-center gap-2 px-5 py-2.5 bg-bolt-accent text-black rounded-xl text-xs font-bold shadow-2xl hover:bg-bolt-accent/90 transition-all"
-            >
-              {isExecuting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Play className="w-3.5 h-3.5 fill-black" />
-              )}
-              {runtimeStatus === 'paused' ? 'Resume' : 'Run Flow'}
-            </button>
-          </div>
-        </header>
+          </header>
+        )}
 
         <div className="flex-1 relative h-full" style={{ minHeight: 0 }}>
           <ReactFlow

@@ -2104,42 +2104,8 @@ export function WorkflowCanvas() {
               </div>
             </div>
 
-            <button
-              onClick={() => setActiveView('graph')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
-                activeView === 'graph'
-                  ? 'bg-white/5 text-white'
-                  : 'text-white/40 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <Box className="w-4 h-4 text-bolt-accent" />
-              <span className="text-xs font-semibold">Graph View</span>
-            </button>
-            <button
-              onClick={() => setActiveView(activeView === 'execution' ? 'graph' : 'execution')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
-                activeView === 'execution'
-                  ? 'bg-white/5 text-white'
-                  : 'text-white/40 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <TerminalIcon className="w-4 h-4" />
-              <span className="text-xs font-semibold">Execution Hub</span>
-            </button>
-            <button
-              onClick={() => setActiveView(activeView === 'history' ? 'graph' : 'history')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
-                activeView === 'history'
-                  ? 'bg-white/5 text-white'
-                  : 'text-white/40 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <History className="w-4 h-4" />
-              <span className="text-xs font-semibold">Run History</span>
-            </button>
-
-            {/* Reusable Nodes is a single button that opens a picker modal,
-                instead of a long inline list crowding the sidebar. */}
+            {/* Graph View / Execution Hub / Run History moved to the top
+                toolbar. Reusable Nodes stays here as a modal-opening button. */}
             <button
               onClick={() => {
                 setReusableSearch('');
@@ -2661,6 +2627,46 @@ export function WorkflowCanvas() {
               >
                 Clear
               </button>
+              {/* View navigation — moved here from the left sidebar so all
+                  navigation and actions live in the top toolbar. */}
+              <div className="flex items-center gap-1 border-r border-white/10 pr-3">
+                <button
+                  onClick={() => setActiveView('graph')}
+                  title="Graph View"
+                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                    activeView === 'graph'
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Box className="w-3.5 h-3.5 text-bolt-accent" />
+                  Graph
+                </button>
+                <button
+                  onClick={() => setActiveView(activeView === 'execution' ? 'graph' : 'execution')}
+                  title="Execution Hub"
+                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                    activeView === 'execution'
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <TerminalIcon className="w-3.5 h-3.5" />
+                  Execution
+                </button>
+                <button
+                  onClick={() => setActiveView(activeView === 'history' ? 'graph' : 'history')}
+                  title="Run History"
+                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                    activeView === 'history'
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                  History
+                </button>
+              </div>
               <div className="flex items-center gap-1 border-r border-white/10 pr-3">
                 <button
                   onClick={undo}

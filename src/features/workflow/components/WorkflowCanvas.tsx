@@ -30,8 +30,11 @@ import {
   Trash2,
   Undo2,
   Redo2,
+  Sparkles,
   CheckCircle2,
   History,
+  ArrowUp,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   generateWorkflowPlan,
@@ -1986,173 +1989,218 @@ export function WorkflowCanvas() {
         </div>
       )}
       {sidebarOpen && (
-        <aside className="w-64 bg-[#0a0a0a] flex flex-col border-r border-white/5 z-50 shrink-0">
-          <div className="p-5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSidebarOpen(false)}
-                className="p-1 rounded-full hover:bg-white/5 text-white/40 hover:text-white"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="font-bold text-sm tracking-tight text-white/90">AutoAgent</span>
+        <aside className="z-50 flex w-64 shrink-0 flex-col border-r border-hairline bg-surface-0">
+          {/* Brand left, collapse right: the primary identity and the
+              secondary control never compete for the same corner. */}
+          <div className="flex items-center justify-between px-4 py-4">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/20">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <span className="text-sm font-semibold tracking-tight text-white/90">AutoAgent</span>
             </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="rounded-lg p-1.5 text-white/35 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
           </div>
 
-          <div className="px-5 mb-4">
-            <div className="p-4 bg-white/[0.03] border border-white/5 rounded-2xl">
-              <p className="text-[11px] font-bold text-white/30 uppercase tracking-widest mb-4">
+          <div className="mb-5 px-4">
+            {/* Section label sits outside the card so every sidebar group
+                shares one header rhythm; the count answers "am I connected?"
+                without opening anything. */}
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
                 Connected Tools
-              </p>
-              <div className="space-y-3">
-                {toolStatuses.map((tool) => (
-                  <button
-                    key={tool.id}
-                    onClick={() => {
-                      console.log(
-                        `🔑 [Auth] Attempting to ${tool.authenticated ? 're-' : ''}authenticate ${tool.name}...`,
-                      );
-                      authenticate(tool.id);
-                    }}
-                    disabled={authInProgress === tool.id}
-                    className="w-full flex items-center justify-between group hover:bg-white/5 rounded-lg px-2 py-1.5 transition-all -mx-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Mail className="w-3.5 h-3.5" style={{ color: tool.color }} />
-                      <span className="text-[11px] font-medium text-white/60 group-hover:text-white/80">
-                        {tool.name}
+              </span>
+              {toolStatuses.length > 0 && (
+                <span className="text-2xs font-medium tabular-nums text-white/30">
+                  {toolStatuses.filter((t) => t.authenticated).length}/{toolStatuses.length}
+                </span>
+              )}
+            </div>
+            <div className="rounded-2xl border border-hairline bg-surface-1 p-1.5">
+              {toolStatuses.map((tool) => (
+                <button
+                  key={tool.id}
+                  onClick={() => {
+                    console.log(
+                      `🔑 [Auth] Attempting to ${tool.authenticated ? 're-' : ''}authenticate ${tool.name}...`,
+                    );
+                    authenticate(tool.id);
+                  }}
+                  disabled={authInProgress === tool.id}
+                  className="group flex w-full items-center justify-between rounded-xl px-2.5 py-2 transition duration-fast ease-smooth hover:bg-white/[0.05] disabled:opacity-60"
+                  title={tool.authenticated ? `Reconnect ${tool.name}` : `Connect ${tool.name}`}
+                >
+                  <span className="flex min-w-0 items-center gap-2.5">
+                    <Mail className="h-3.5 w-3.5 shrink-0" style={{ color: tool.color }} />
+                    <span className="truncate text-xs font-medium text-white/65 transition duration-fast group-hover:text-white">
+                      {tool.name}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {tool.authenticated && (
+                      <span className="text-2xs text-white/35 opacity-0 transition duration-fast group-hover:opacity-100">
+                        reconnect
                       </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {authInProgress === tool.id && (
-                        <Loader2 className="w-3 h-3 animate-spin text-white/40" />
-                      )}
-                      <div
-                        className={`w-1.5 h-1.5 rounded-full transition-all ${
+                    )}
+                    {authInProgress === tool.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                    ) : (
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full transition duration-DEFAULT ease-smooth ${
                           tool.authenticated
-                            ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]'
+                            ? 'bg-emerald-400 shadow-[0_0_7px_rgba(52,211,153,0.7)]'
                             : 'bg-white/20'
                         }`}
                       />
-                      {tool.authenticated && (
-                        <span className="text-[9px] text-white/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                          refresh
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                ))}
-                {toolStatuses.length === 0 && (
-                  <p className="text-[10px] text-white/30 italic">No tools registered</p>
-                )}
-              </div>
+                    )}
+                  </span>
+                </button>
+              ))}
+              {toolStatuses.length === 0 && (
+                <p className="px-2.5 py-2 text-xs text-white/30">No tools registered</p>
+              )}
             </div>
           </div>
 
-          <nav className="flex-1 overflow-y-auto p-4 space-y-2">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/35">
+          <nav className="flex-1 space-y-5 overflow-y-auto px-4 pb-4">
+            <div>
+              <div className="mb-2 flex items-center justify-between px-1">
+                <span className="text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
                   Task Sessions
-                </div>
+                </span>
                 <button
                   onClick={createNewTask}
-                  className="p-1.5 rounded-lg border border-white/10 bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.05]"
-                  title="New Task"
+                  className="rounded-lg p-1.5 text-white/40 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
+                  title="New task"
+                  aria-label="New task"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="space-y-2">
-                {taskSessions.map((task, index) => (
-                  <div
-                    key={task.id}
-                    className={`flex items-center gap-2 rounded-xl border transition-all ${activeTaskId === task.id ? 'border-bolt-accent/40 bg-bolt-accent/10 text-white' : 'border-white/5 bg-white/[0.02] text-white/60 hover:bg-white/[0.04]'}`}
-                  >
-                    <button
-                      onClick={() => {
-                        setActiveTaskId(task.id);
-                        setChatInput('');
-                        setShowChatPanel(true);
-                        setSidebarOpen(true);
-                      }}
-                      className="flex-1 text-left px-3 py-2"
+              <div className="space-y-1">
+                {taskSessions.map((task) => {
+                  const isActive = activeTaskId === task.id;
+                  return (
+                    <div
+                      key={task.id}
+                      className={`group flex items-center rounded-xl transition duration-fast ease-smooth ${
+                        isActive
+                          ? 'bg-accent-muted text-white ring-1 ring-inset ring-accent/25'
+                          : 'text-white/60 hover:bg-white/[0.05]'
+                      }`}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-medium truncate">{task.name}</span>
-                        <span className="text-[9px] text-white/40">{index + 1}</span>
-                      </div>
-                      <div className="text-[9px] text-white/35 mt-1">
-                        {task.messages.length} messages
-                      </div>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`Delete ${task.name}?`)) {
-                          handleDeleteTask(task.id);
-                        }
-                      }}
-                      className="mr-2 rounded-lg p-1.5 text-white/35 hover:bg-white/5 hover:text-red-300"
-                      title="Delete task"
-                      aria-label={`Delete ${task.name}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() => {
+                          setActiveTaskId(task.id);
+                          setChatInput('');
+                          setShowChatPanel(true);
+                          setSidebarOpen(true);
+                        }}
+                        className="min-w-0 flex-1 px-2.5 py-2 text-left"
+                      >
+                        <span
+                          className={`block truncate text-xs font-medium ${isActive ? 'text-white' : 'text-white/75'}`}
+                        >
+                          {task.name}
+                        </span>
+                        <span className="mt-0.5 block text-2xs text-white/35">
+                          {task.messages.length}{' '}
+                          {task.messages.length === 1 ? 'message' : 'messages'}
+                        </span>
+                      </button>
+                      {/* Destructive action stays hidden until the row is
+                          hovered or keyboard-focused, so it can never be the
+                          first thing a pointer lands on. */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Delete ${task.name}?`)) {
+                            handleDeleteTask(task.id);
+                          }
+                        }}
+                        className="mr-1.5 rounded-lg p-1.5 text-white/35 opacity-0 transition duration-fast ease-smooth hover:bg-red-500/10 hover:text-red-300 focus-visible:opacity-100 group-hover:opacity-100"
+                        title="Delete task"
+                        aria-label={`Delete ${task.name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             {/* Graph View / Execution Hub / Run History moved to the top
                 toolbar. Reusable Nodes stays here as a modal-opening button. */}
-            <button
-              onClick={() => {
-                setReusableSearch('');
-                setShowReusableModal(true);
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-white/40 hover:text-white hover:bg-white/5"
-            >
-              <Box className="w-4 h-4" />
-              <span className="text-xs font-semibold">Reusable Nodes</span>
-              <span className="ml-auto text-[10px] text-white/30">{reusableNodes.length}</span>
-            </button>
+            <div>
+              <div className="mb-2 px-1">
+                <span className="text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
+                  Library
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setReusableSearch('');
+                  setShowReusableModal(true);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.05] hover:text-white"
+              >
+                <Box className="h-4 w-4 shrink-0" />
+                <span className="text-xs font-medium">Reusable Nodes</span>
+                <span className="ml-auto text-2xs tabular-nums text-white/30">
+                  {reusableNodes.length}
+                </span>
+              </button>
+            </div>
 
             {savedList.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-white/5">
-                <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2 px-3">
-                  My Workflows
-                </p>
-                {savedList.map((w) => (
-                  <div
-                    key={w.name}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 transition-all group"
-                  >
-                    <button
-                      onClick={() => handleLoad(w.name)}
-                      className="flex-1 text-left text-xs text-white/60 hover:text-white truncate"
+              <div>
+                <div className="mb-2 px-1">
+                  <span className="text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
+                    My Workflows
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {savedList.map((w) => (
+                    <div
+                      key={w.name}
+                      className="group flex items-center rounded-xl text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.05]"
                     >
-                      {w.name}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(w.name)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-all"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() => handleLoad(w.name)}
+                        className="min-w-0 flex-1 truncate px-2.5 py-2 text-left text-xs font-medium transition duration-fast group-hover:text-white"
+                      >
+                        {w.name}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(w.name)}
+                        className="mr-1.5 rounded-lg p-1.5 text-white/35 opacity-0 transition duration-fast ease-smooth hover:bg-red-500/10 hover:text-red-300 focus-visible:opacity-100 group-hover:opacity-100"
+                        title={`Delete ${w.name}`}
+                        aria-label={`Delete ${w.name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </nav>
 
-          <div className="p-6 border-t border-white/5">
-            <div className="bg-white/[0.02] p-4 rounded-xl border border-white/5">
-              <p className="text-[11px] text-white/40 font-medium leading-relaxed">
-                Each node reads/writes to a shared state object. Click "Run Flow" to execute the
-                graph.
-              </p>
-            </div>
+          {/* Purely informational, so it loses the card treatment and reads as
+              a footnote instead of competing with real controls. */}
+          <div className="border-t border-hairline px-4 py-4">
+            <p className="text-2xs leading-relaxed text-white/35">
+              Every node reads and writes one shared state object. Hit{' '}
+              <span className="font-medium text-white/55">Run Flow</span> to execute the graph.
+            </p>
           </div>
         </aside>
       )}
@@ -2161,7 +2209,7 @@ export function WorkflowCanvas() {
         {!sidebarOpen && (
           <button
             onClick={() => setSidebarOpen(true)}
-            className="absolute left-4 top-4 z-50 flex items-center gap-2 rounded-xl border border-white/10 bg-[#0a0a0a]/85 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-white/60 hover:text-white hover:bg-white/[0.04]"
+            className="glass-panel absolute left-4 top-4 z-50 flex items-center gap-2 rounded-xl px-3 py-2 text-2xs font-semibold uppercase tracking-[0.14em] text-white/60 shadow-float transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
           >
             <ChevronRight className="w-3.5 h-3.5" />
             Menu
@@ -2169,17 +2217,29 @@ export function WorkflowCanvas() {
         )}
 
         {showSplash && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center p-6 bg-[#050505]/55 backdrop-blur-sm">
-            <div className="w-full max-w-3xl">
-              <h1 className="text-5xl font-bold tracking-tighter text-white mb-10 text-center">
-                What do you wanna automate today?
-              </h1>
-              <div className="relative group rounded-[28px] border border-white/10 bg-[#111111]/80 p-5 shadow-2xl shadow-black/30 backdrop-blur-md">
+          <div className="ambient-glow absolute inset-0 z-40 flex items-center justify-center p-6 bg-surface-0/70 backdrop-blur-sm animate-fade-in">
+            <div className="w-full max-w-3xl animate-rise-in">
+              {/* Eyebrow + headline + one supporting line: the standard hero
+                  hierarchy, so the page states what it is before what to type. */}
+              <div className="mb-8 text-center">
+                <span className="inline-flex items-center gap-2 rounded-full border border-subtle bg-white/[0.03] px-3 py-1 text-2xs font-semibold uppercase text-accent">
+                  <Sparkles className="h-3 w-3" />
+                  AI workflow builder
+                </span>
+                <h1 className="mt-5 text-5xl font-semibold leading-[1.05] tracking-[-0.03em] text-white">
+                  What do you wanna automate today?
+                </h1>
+                <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-white/45">
+                  Describe the outcome in plain words. AutoAgent plans the steps, wires the tools,
+                  and runs it — you review before anything executes.
+                </p>
+              </div>
+              <div className="group relative rounded-3xl border border-subtle bg-surface-2/80 p-5 shadow-panel backdrop-blur-md transition duration-DEFAULT ease-smooth focus-within:border-accent/30 focus-within:shadow-focus">
                 <textarea
                   value={activeTaskDraft}
                   onChange={(e) => setActiveTaskDraft(e.target.value)}
-                  placeholder="Describe your workflow goal..."
-                  className="w-full bg-transparent text-xl text-white/90 placeholder:text-white/20 focus:outline-none resize-none min-h-[120px] leading-relaxed font-medium"
+                  placeholder="e.g. Scrape a website, summarise it, and email me the report…"
+                  className="min-h-[116px] w-full resize-none bg-transparent text-lg font-normal leading-relaxed text-white/90 placeholder:text-white/25 focus:outline-none"
                   onKeyDown={async (e) => {
                     if (e.key === 'Enter' && !e.shiftKey && (activeTaskDraft || '').trim()) {
                       e.preventDefault();
@@ -2188,31 +2248,31 @@ export function WorkflowCanvas() {
                     }
                   }}
                 />
-                <div className="flex items-center justify-between gap-3 pt-4 border-t border-white/5">
+                <div className="flex items-center justify-between gap-3 border-t border-hairline pt-4">
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowTemplatesModal(true)}
-                      className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white/60 hover:bg-white/10 transition-all flex items-center gap-2"
+                      className="flex items-center gap-2 rounded-xl border border-subtle bg-white/[0.03] px-3.5 py-2 text-xs font-semibold text-white/70 transition duration-fast ease-smooth hover:bg-white/[0.07] hover:text-white"
                     >
-                      <FolderOpen className="w-3.5 h-3.5" />
+                      <FolderOpen className="h-3.5 w-3.5" />
                       Templates
                     </button>
                     <button
                       onClick={handleBlankAgent}
-                      className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white/60 hover:bg-white/10 transition-all flex items-center gap-2"
+                      className="flex items-center gap-2 rounded-xl border border-subtle bg-white/[0.03] px-3.5 py-2 text-xs font-semibold text-white/70 transition duration-fast ease-smooth hover:bg-white/[0.07] hover:text-white"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                       Blank
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 ml-auto">
-                    <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#0d0d0d] px-2 py-1.5 shadow-inner shadow-black/30">
-                      <label className="text-[11px] text-white/45 font-medium">Model:</label>
+                  <div className="ml-auto flex items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-xl border border-subtle bg-surface-1 px-2.5 py-1.5">
+                      <label className="text-[11px] font-medium text-white/40">Model</label>
                       <select
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value)}
-                        className="appearance-none bg-[#0d0d0d] text-white text-xs font-medium border-0 outline-none rounded-md pr-6 cursor-pointer min-w-[200px]"
+                        className="min-w-[190px] cursor-pointer appearance-none rounded-md border-0 bg-surface-1 pr-6 text-xs font-medium text-white outline-none"
                         style={{
                           backgroundImage:
                             'linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.7) 50%), linear-gradient(135deg, rgba(255,255,255,0.7) 50%, transparent 50%)',
@@ -2238,15 +2298,24 @@ export function WorkflowCanvas() {
                       </select>
                     </div>
 
+                    {/* The one primary action on the page: solid accent with a
+                        glow, so it is unmistakably the thing to press. */}
                     <button
                       onClick={handleMagicGenerate}
                       disabled={!getActivePrompt() || isGenerating}
-                      className="p-4 bg-white/10 hover:bg-bolt-accent hover:text-black rounded-2xl transition-all disabled:opacity-20 shadow-lg group"
+                      title="Generate workflow (Enter)"
+                      className="group flex items-center gap-2 rounded-2xl bg-accent px-4 py-3 text-sm font-semibold text-black shadow-glow transition duration-DEFAULT ease-smooth hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30 disabled:shadow-none"
                     >
                       {isGenerating ? (
-                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Planning
+                        </>
                       ) : (
-                        <ChevronRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+                        <>
+                          Generate
+                          <ChevronRight className="h-4 w-4 transition-transform duration-fast ease-smooth group-hover:translate-x-0.5" />
+                        </>
                       )}
                     </button>
                   </div>
@@ -2605,69 +2674,77 @@ export function WorkflowCanvas() {
             splash's translucent blur was showing the buttons through faintly.
             It appears once a workflow is on the canvas. */}
         {!showSplash && (
-          <header className="absolute top-0 right-0 z-30 px-5 py-4 shrink-0">
-            <div className="flex items-center gap-2">
+          <header className="absolute top-0 right-0 z-30 shrink-0 px-5 py-4">
+            {/* One floating command bar rather than a row of separate chips:
+                a single surface with hairline dividers between groups, which is
+                what makes a dense toolbar read as intentional. */}
+            <div className="glass-panel flex items-center gap-1 rounded-2xl px-1.5 py-1.5 shadow-float animate-fade-in">
               <button
                 onClick={() => setShowChatPanel(!showChatPanel)}
-                className="px-3 py-2 text-white/60 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
+                className={`rounded-xl px-3 py-2 text-2xs font-bold uppercase transition duration-fast ease-smooth ${
+                  showChatPanel
+                    ? 'bg-white/10 text-white'
+                    : 'text-white/55 hover:bg-white/5 hover:text-white'
+                }`}
               >
                 Chat
               </button>
               {!sidebarOpen && (
                 <button
                   onClick={() => setSidebarOpen(true)}
-                  className="px-3 py-2 text-white/60 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
+                  className="rounded-xl px-3 py-2 text-2xs font-bold uppercase text-white/55 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
                 >
                   Tasks
                 </button>
               )}
               <button
                 onClick={handleClear}
-                className="px-3 py-2 text-white/40 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-[0.2em] border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm"
+                className="rounded-xl px-3 py-2 text-2xs font-bold uppercase text-white/45 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
               >
                 Clear
               </button>
               {/* View navigation — moved here from the left sidebar so all
-                  navigation and actions live in the top toolbar. */}
-              <div className="flex items-center gap-1 border-r border-white/10 pr-3">
+                  navigation and actions live in the top toolbar. A segmented
+                  control: the active view is filled, the rest are quiet. */}
+              <div className="mx-1 flex items-center gap-0.5 rounded-xl bg-white/[0.03] p-0.5 ring-1 ring-inset ring-white/[0.06]">
                 <button
                   onClick={() => setActiveView('graph')}
                   title="Graph View"
-                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-bold uppercase transition duration-fast ease-smooth ${
                     activeView === 'graph'
-                      ? 'bg-white/10 text-white'
-                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                      ? 'bg-white/10 text-white shadow-sm'
+                      : 'text-white/45 hover:text-white'
                   }`}
                 >
-                  <Box className="w-3.5 h-3.5 text-bolt-accent" />
+                  <Box className="h-3.5 w-3.5 text-accent" />
                   Graph
                 </button>
                 <button
                   onClick={() => setActiveView(activeView === 'execution' ? 'graph' : 'execution')}
                   title="Execution Hub"
-                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-bold uppercase transition duration-fast ease-smooth ${
                     activeView === 'execution'
-                      ? 'bg-white/10 text-white'
-                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                      ? 'bg-white/10 text-white shadow-sm'
+                      : 'text-white/45 hover:text-white'
                   }`}
                 >
-                  <TerminalIcon className="w-3.5 h-3.5" />
+                  <TerminalIcon className="h-3.5 w-3.5" />
                   Execution
                 </button>
                 <button
                   onClick={() => setActiveView(activeView === 'history' ? 'graph' : 'history')}
                   title="Run History"
-                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-bold uppercase transition duration-fast ease-smooth ${
                     activeView === 'history'
-                      ? 'bg-white/10 text-white'
-                      : 'text-white/50 hover:text-white hover:bg-white/5'
+                      ? 'bg-white/10 text-white shadow-sm'
+                      : 'text-white/45 hover:text-white'
                   }`}
                 >
-                  <History className="w-3.5 h-3.5" />
+                  <History className="h-3.5 w-3.5" />
                   History
                 </button>
               </div>
-              <div className="flex items-center gap-1 border-r border-white/10 pr-3">
+              <div className="ml-1 flex items-center gap-0.5 border-l border-hairline pl-2">
                 <button
                   onClick={undo}
                   disabled={!canUndo}
@@ -2744,79 +2821,84 @@ export function WorkflowCanvas() {
                   )}
                 </div>
               )}
-              {showSaveDialog ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={workflowName}
-                    onChange={(e) => setWorkflowName(e.target.value)}
-                    placeholder="Workflow name…"
-                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-bolt-accent/40 w-40"
-                    onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                    autoFocus
-                  />
+              <div className="ml-1 flex items-center gap-1 border-l border-hairline pl-2">
+                {showSaveDialog ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={workflowName}
+                      onChange={(e) => setWorkflowName(e.target.value)}
+                      placeholder="Workflow name…"
+                      className="w-40 rounded-lg border border-subtle bg-white/[0.04] px-2.5 py-1.5 text-xs text-white outline-none transition duration-fast ease-smooth focus:border-accent/40"
+                      onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSave}
+                      disabled={!workflowName.trim()}
+                      title="Save workflow"
+                      className="rounded-lg bg-accent/15 p-2 text-accent transition duration-fast ease-smooth hover:bg-accent/25 disabled:opacity-30"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setShowSaveDialog(false)}
+                      className="rounded-lg p-2 text-white/40 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    onClick={handleSave}
-                    disabled={!workflowName.trim()}
-                    className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-all disabled:opacity-30"
+                    onClick={() => setShowSaveDialog(true)}
+                    disabled={nodes.length === 0}
+                    title="Save workflow"
+                    className="flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-white/55 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white disabled:opacity-25"
                   >
-                    <Save className="w-3.5 h-3.5" />
+                    <Save className="h-3.5 w-3.5" /> Save
                   </button>
-                  <button
-                    onClick={() => setShowSaveDialog(false)}
-                    className="p-2 text-white/40 hover:text-white"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
+                )}
                 <button
-                  onClick={() => setShowSaveDialog(true)}
+                  onClick={() => setShowExportModal(true)}
                   disabled={nodes.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-2 text-white/40 hover:text-white transition-colors text-xs font-bold disabled:opacity-20"
+                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-white/55 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white disabled:opacity-25"
+                  title="Export workflow into 10 Python agent frameworks"
                 >
-                  <Save className="w-3.5 h-3.5" /> Save
+                  <Download className="h-3.5 w-3.5 text-accent" /> Export
                 </button>
-              )}
-              <button
-                onClick={() => setShowExportModal(true)}
-                disabled={nodes.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 text-white/60 hover:text-white transition-colors text-xs font-bold disabled:opacity-20 border border-white/10 rounded-xl bg-[#0d0d0d]/70 backdrop-blur-sm hover:bg-white/5"
-                title="Export workflow into 10 Python agent frameworks"
-              >
-                <Download className="w-3.5 h-3.5 text-bolt-accent" /> Export
-              </button>
+              </div>
               {isExecuting && (
-                <div className="flex items-center gap-2">
+                <div className="ml-1 flex items-center gap-1 border-l border-hairline pl-2">
                   <button
                     onClick={pauseExecution}
-                    className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
+                    className="rounded-xl px-2.5 py-2 text-2xs font-bold uppercase text-white/70 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
                   >
                     Pause
                   </button>
                   <button
                     onClick={resumeExecution}
-                    className="px-3 py-2 border border-white/10 bg-white/5 text-white/80 rounded-xl text-[10px] font-bold hover:bg-white/10"
+                    className="rounded-xl px-2.5 py-2 text-2xs font-bold uppercase text-white/70 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
                   >
                     Resume
                   </button>
                   <button
                     onClick={cancelExecution}
-                    className="px-3 py-2 border border-red-500/30 bg-red-500/10 text-red-300 rounded-xl text-[10px] font-bold hover:bg-red-500/20"
+                    className="rounded-xl px-2.5 py-2 text-2xs font-bold uppercase text-red-300/90 transition duration-fast ease-smooth hover:bg-red-500/10 hover:text-red-200"
                   >
                     Cancel
                   </button>
                 </div>
               )}
+              {/* Primary action: the only filled accent control in the bar. */}
               <button
                 onClick={handleExecuteFlow}
                 disabled={nodes.length === 0 || isExecuting}
-                className="flex items-center gap-2 px-5 py-2.5 bg-bolt-accent text-black rounded-xl text-xs font-bold shadow-2xl hover:bg-bolt-accent/90 transition-all"
+                className="ml-1 flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-xs font-bold text-black shadow-glow transition duration-DEFAULT ease-smooth hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30 disabled:shadow-none"
               >
                 {isExecuting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Play className="w-3.5 h-3.5 fill-black" />
+                  <Play className="h-3.5 w-3.5 fill-black" />
                 )}
                 {runtimeStatus === 'paused' ? 'Resume' : 'Run Flow'}
               </button>
@@ -3353,61 +3435,69 @@ export function WorkflowCanvas() {
       </main>
 
       {showChatPanel && (
-        <aside className="w-[360px] border-l border-white/10 bg-[#090909]/95 backdrop-blur-xl flex flex-col shrink-0 z-40">
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">Workflow Chat</p>
-              <h3 className="text-sm font-semibold text-white">
+        <aside className="z-40 flex w-[380px] shrink-0 flex-col border-l border-hairline bg-surface-0/95 backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-3.5">
+            <div className="min-w-0">
+              <p className="text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
+                Workflow Chat
+              </p>
+              <h3 className="truncate text-sm font-semibold tracking-tight text-white">
                 {activeTask?.name || 'Task session'}
               </h3>
             </div>
             <button
               onClick={() => setShowChatPanel(false)}
-              className="p-1.5 hover:bg-white/5 rounded-full text-white/40 hover:text-white"
+              className="shrink-0 rounded-lg p-1.5 text-white/35 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
+              title="Close chat"
+              aria-label="Close chat"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 py-3">
-            <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto px-3.5 py-4">
+            <div className="space-y-3.5">
               {chatMessages.map((message, index) => (
                 <div
                   key={`${activeTaskId}-${message.role}-${index}`}
-                  className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`flex items-start gap-2.5 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   {message.role === 'assistant' && (
-                    <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[9px] font-bold text-white/70">
-                      AI
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/20">
+                      <Sparkles className="h-3 w-3" />
                     </div>
                   )}
                   {/* pre-wrap: patch summaries and validation
                                         issues are multi-line lists, and without it
                                         they collapsed onto one unreadable line. */}
                   <div
-                    className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-[11px] leading-5 ${message.role === 'user' ? 'bg-bolt-accent text-black font-medium' : 'bg-white/[0.04] text-white/80 border border-white/5'}`}
+                    className={`max-w-[85%] whitespace-pre-wrap px-3 py-2 text-xs leading-relaxed ${
+                      message.role === 'user'
+                        ? 'rounded-2xl rounded-tr-md bg-accent font-medium text-black'
+                        : 'rounded-2xl rounded-tl-md border border-hairline bg-surface-2 text-white/80'
+                    }`}
                   >
                     {message.text}
                   </div>
                   {message.role === 'user' && (
-                    <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[9px] font-bold text-white/70">
-                      U
+                    <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-subtle bg-surface-2 text-2xs font-semibold text-white/60">
+                      You
                     </div>
                   )}
                 </div>
               ))}
 
               {(isGenerating || isPatching) && (
-                <div className="flex gap-2 justify-start">
-                  <div className="mt-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[9px] font-bold text-white/70">
-                    AI
+                <div className="flex items-start justify-start gap-2.5">
+                  <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/20">
+                    <Sparkles className="h-3 w-3" />
                   </div>
-                  <div className="max-w-[85%] rounded-2xl border border-white/5 bg-white/[0.04] px-3 py-2 text-[11px] text-white/70">
+                  <div className="rounded-2xl rounded-tl-md border border-hairline bg-surface-2 px-3 py-2.5 text-xs text-white/60">
                     <div className="flex items-center gap-2">
                       <span className="inline-flex gap-1">
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white/60 [animation-delay:-0.2s]" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white/60 [animation-delay:-0.1s]" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white/60" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
                       </span>
                       thinking…
                     </div>
@@ -3421,25 +3511,27 @@ export function WorkflowCanvas() {
               {pendingPatch && (
                 <div
                   data-testid="pending-patch"
-                  className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3"
+                  className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] p-3.5 shadow-panel"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-200">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-amber-200">
+                    <AlertTriangle className="h-3.5 w-3.5" />
                     Confirm this change
                   </p>
-                  <ul className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                  <ul className="mt-2.5 space-y-1.5 text-xs leading-relaxed text-amber-100/80">
                     {pendingPatch.operations.map((operation, index) => (
-                      <li key={index}>
+                      <li key={index} className="flex gap-2">
+                        <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-amber-300/60" />
                         {describeOperation(operation, nodes as unknown as WorkflowNodeModel[])}
                       </li>
                     ))}
                   </ul>
-                  <div className="mt-3 flex items-center gap-2">
+                  <div className="mt-3.5 flex items-center gap-2">
                     <button
                       onClick={() => {
                         applyGraphPatch(pendingPatch);
                         setPendingPatch(null);
                       }}
-                      className="rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-amber-300"
+                      className="rounded-xl bg-amber-400 px-3 py-1.5 text-xs font-semibold text-black transition duration-fast ease-smooth hover:bg-amber-300"
                     >
                       Apply
                     </button>
@@ -3454,7 +3546,7 @@ export function WorkflowCanvas() {
                           },
                         ]);
                       }}
-                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                      className="rounded-xl px-3 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
                     >
                       Discard
                     </button>
@@ -3468,25 +3560,26 @@ export function WorkflowCanvas() {
               {pendingFixes && pendingFixes.length > 0 && (
                 <div
                   data-testid="pending-fixes"
-                  className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3"
+                  className="rounded-2xl border border-rose-400/25 bg-rose-400/[0.07] p-3.5 shadow-panel"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-200">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-rose-200">
+                    <AlertTriangle className="h-3.5 w-3.5" />
                     Suggested fixes
                   </p>
-                  <div className="mt-2 space-y-1.5">
+                  <div className="mt-2.5 space-y-1.5">
                     {pendingFixes.map((fix, index) => (
                       <button
                         key={index}
                         onClick={() => void applyFixSuggestion(fix)}
                         disabled={isPatching}
-                        className={`flex w-full flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                        className={`flex w-full flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition duration-fast ease-smooth disabled:opacity-50 ${
                           fix.kind === 'custom'
-                            ? 'border-white/15 bg-white/[0.03] hover:bg-white/5'
-                            : 'border-rose-400/25 bg-rose-400/5 hover:bg-rose-400/10'
+                            ? 'border-subtle bg-white/[0.03] hover:bg-white/[0.07]'
+                            : 'border-rose-400/20 bg-rose-400/[0.06] hover:bg-rose-400/[0.12]'
                         }`}
                       >
-                        <span className="text-[11px] font-bold text-white/90">{fix.label}</span>
-                        <span className="text-[10px] leading-4 text-white/55">{fix.detail}</span>
+                        <span className="text-xs font-semibold text-white/90">{fix.label}</span>
+                        <span className="text-2xs leading-relaxed text-white/50">{fix.detail}</span>
                       </button>
                     ))}
                   </div>
@@ -3498,7 +3591,7 @@ export function WorkflowCanvas() {
                         { role: 'assistant', text: 'Okay, I left it as is.' },
                       ]);
                     }}
-                    className="mt-2 rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                    className="mt-2.5 rounded-xl px-3 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
                   >
                     Dismiss
                   </button>
@@ -3510,22 +3603,23 @@ export function WorkflowCanvas() {
               {pendingInputs && pendingInputs.length > 0 && (
                 <div
                   data-testid="pending-inputs"
-                  className="rounded-2xl border border-bolt-accent/30 bg-bolt-accent/10 p-3"
+                  className="rounded-2xl border border-accent/25 bg-accent-muted p-3.5 shadow-panel"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-bolt-accent">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-accent">
+                    <Play className="h-3 w-3 fill-current" />
                     Fill in to run
                   </p>
-                  <div className="mt-2 space-y-3">
+                  <div className="mt-3 space-y-3.5">
                     {pendingInputs.map((input) => (
                       <div key={input.key}>
-                        <label className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-white/75">
+                        <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-white/80">
                           {input.label}
                           {input.required ? (
-                            <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-bolt-accent">
+                            <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-2xs font-medium text-accent">
                               Required
                             </span>
                           ) : (
-                            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white/50">
+                            <span className="rounded-full bg-white/[0.08] px-1.5 py-0.5 text-2xs font-medium text-white/45">
                               Optional
                             </span>
                           )}
@@ -3533,7 +3627,7 @@ export function WorkflowCanvas() {
                         {/* Why this value is needed in THIS flow, from the tool's
                             own field description — so a new field is never a mystery. */}
                         {input.description && (
-                          <p className="mb-1 text-[10px] leading-4 text-white/40">
+                          <p className="mb-1.5 text-2xs leading-relaxed text-white/40">
                             {input.description}
                             <span className="text-white/25"> · used by {input.nodeLabel}</span>
                           </p>
@@ -3564,20 +3658,20 @@ export function WorkflowCanvas() {
                               submitPendingInputs();
                             }
                           }}
-                          className="w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[12px] text-white outline-none focus:border-bolt-accent/50"
+                          className="w-full rounded-xl border border-subtle bg-surface-0/60 px-3 py-2 text-xs text-white outline-none transition duration-fast ease-smooth placeholder:text-white/25 focus:border-accent/40"
                         />
                       </div>
                     ))}
                   </div>
-                  <div className="mt-3 flex items-center gap-2">
+                  <div className="mt-3.5 flex items-center gap-2">
                     <button
                       onClick={submitPendingInputs}
                       disabled={pendingInputs.some(
                         (input) => input.required && !(pendingInputValues[input.key] ?? '').trim(),
                       )}
-                      className="flex items-center gap-1.5 rounded-lg bg-bolt-accent px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-bolt-accent/90 disabled:opacity-40"
+                      className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-black shadow-glow transition duration-fast ease-smooth hover:bg-accent-hover disabled:opacity-40 disabled:shadow-none"
                     >
-                      <Play className="w-3 h-3 fill-black" />
+                      <Play className="h-3 w-3 fill-black" />
                       Run with these
                     </button>
                     <button
@@ -3589,7 +3683,7 @@ export function WorkflowCanvas() {
                           { role: 'assistant', text: 'Okay, I did not run it.' },
                         ]);
                       }}
-                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                      className="rounded-xl px-3 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
                     >
                       Cancel
                     </button>
@@ -3602,27 +3696,28 @@ export function WorkflowCanvas() {
               {pendingRunAction?.kind === 'resume' && (
                 <div
                   data-testid="pending-resume"
-                  className="rounded-2xl border border-blue-400/30 bg-blue-400/10 p-3"
+                  className="rounded-2xl border border-blue-400/25 bg-blue-400/[0.07] p-3.5 shadow-panel"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-300">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-blue-300">
+                    <History className="h-3.5 w-3.5" />
                     Unfinished run
                   </p>
-                  <p className="mt-1 text-[11px] text-white/70">
+                  <p className="mt-1.5 text-xs leading-relaxed text-white/65">
                     {pendingRunAction.fromFailed
                       ? 'A previous run stopped at a failed step.'
                       : 'A previous run did not finish.'}
                   </p>
-                  <div className="mt-3 flex items-center gap-2">
+                  <div className="mt-3.5 flex items-center gap-2">
                     <button
                       onClick={resumeSavedRun}
-                      className="flex items-center gap-1.5 rounded-lg bg-blue-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-blue-300"
+                      className="flex items-center gap-1.5 rounded-xl bg-blue-400 px-3 py-1.5 text-xs font-semibold text-black transition duration-fast ease-smooth hover:bg-blue-300"
                     >
-                      <Play className="w-3 h-3 fill-black" />
+                      <Play className="h-3 w-3 fill-black" />
                       Resume
                     </button>
                     <button
                       onClick={startFreshRun}
-                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                      className="rounded-xl px-3 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
                     >
                       Start fresh
                     </button>
@@ -3633,20 +3728,24 @@ export function WorkflowCanvas() {
               {pendingRunAction?.kind === 'auth' && (
                 <div
                   data-testid="pending-auth"
-                  className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3"
+                  className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] p-3.5 shadow-panel"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-200">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-amber-200">
+                    <AlertTriangle className="h-3.5 w-3.5" />
                     Connect to run
                   </p>
-                  <ul className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                  <ul className="mt-2.5 space-y-1.5 text-xs text-amber-100/80">
                     {pendingRunAction.tools.map((tool) => (
-                      <li key={tool.id}>{tool.name} — not connected</li>
+                      <li key={tool.id} className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300/70" />
+                        {tool.name} — not connected
+                      </li>
                     ))}
                   </ul>
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       onClick={() => void connectPendingTools()}
-                      className="rounded-lg bg-amber-400 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:bg-amber-300"
+                      className="rounded-xl bg-amber-400 px-3 py-1.5 text-xs font-semibold text-black transition duration-fast ease-smooth hover:bg-amber-300"
                     >
                       Connect &amp; run
                     </button>
@@ -3658,7 +3757,7 @@ export function WorkflowCanvas() {
                           { role: 'assistant', text: 'Okay, I did not run it.' },
                         ]);
                       }}
-                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/70 hover:bg-white/5"
+                      className="rounded-xl px-3 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white"
                     >
                       Cancel
                     </button>
@@ -3668,13 +3767,13 @@ export function WorkflowCanvas() {
             </div>
           </div>
 
-          <div className="border-t border-white/10 p-3">
+          <div className="border-t border-hairline p-3.5">
             {/* Version picker, opened by the "Versions" button below. Lists the
                 labeled snapshots each chat patch produced; clicking one restores
                 the whole workflow to that version. */}
             {showChatVersions && versions.length > 0 && (
-              <div className="mb-3 max-h-52 overflow-y-auto rounded-2xl border border-white/10 bg-black/40 p-2">
-                <p className="px-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white/40">
+              <div className="animate-scale-in mb-3 max-h-52 overflow-y-auto rounded-2xl border border-subtle bg-surface-2 p-1.5 shadow-float">
+                <p className="px-2 pb-1.5 pt-1 text-2xs font-semibold uppercase tracking-[0.14em] text-white/35">
                   Workflow versions
                 </p>
                 {versions
@@ -3687,80 +3786,91 @@ export function WorkflowCanvas() {
                         switchToVersion(i);
                         setShowChatVersions(false);
                       }}
-                      className={`flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-white/5 ${
-                        i === versionIndex ? 'bg-white/[0.06]' : ''
+                      className={`flex w-full flex-col items-start gap-0.5 rounded-xl px-2.5 py-2 text-left transition duration-fast ease-smooth hover:bg-white/[0.05] ${
+                        i === versionIndex ? 'bg-accent-muted ring-1 ring-inset ring-accent/20' : ''
                       }`}
                     >
-                      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-bolt-accent">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold text-accent">
                         {v.label}
                         {i === versionIndex && (
-                          <span className="rounded-full bg-bolt-accent/20 px-1.5 py-0.5 text-[8px] text-bolt-accent">
+                          <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-2xs font-medium text-accent">
                             current
                           </span>
                         )}
-                        <span className="font-normal normal-case text-white/30">
+                        <span className="font-normal text-white/30">
                           {new Date(v.at).toLocaleTimeString()}
                         </span>
                       </span>
-                      <span className="line-clamp-2 text-[10px] leading-4 text-white/55">
+                      <span className="line-clamp-2 text-2xs leading-relaxed text-white/50">
                         {v.summary}
                       </span>
                     </button>
                   ))}
               </div>
             )}
-            <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Ask to add, remove, rename, or route a step..."
-              rows={3}
-              className="w-full bg-white/[0.03] border border-white/10 rounded-2xl p-3 text-[12px] text-white placeholder:text-white/30 focus:outline-none resize-none"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleWorkflowChatSubmit();
-                }
-              }}
-            />
-            <div className="mt-3 flex items-center justify-between gap-2">
-              {/* Always-available way to change an input value (e.g. a bad URL)
-                  and re-run, straight from the chat — even after a run that
-                  "passed" but scraped the wrong thing. */}
-              <div className="flex items-center gap-2">
+            {/* Textarea and its controls live in ONE focus-within container, so
+                the composer reads as a single input surface rather than a field
+                with loose buttons under it. */}
+            <div className="rounded-2xl border border-subtle bg-surface-1 p-2.5 transition duration-DEFAULT ease-smooth focus-within:border-accent/30 focus-within:shadow-focus">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask to add, remove, rename, or route a step…"
+                rows={3}
+                className="w-full resize-none bg-transparent px-1 text-xs leading-relaxed text-white placeholder:text-white/25 focus:outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleWorkflowChatSubmit();
+                  }
+                }}
+              />
+              <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-hairline pt-2.5">
+                {/* Always-available way to change an input value (e.g. a bad URL)
+                    and re-run, straight from the chat — even after a run that
+                    "passed" but scraped the wrong thing. */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={openInputEditor}
+                    disabled={isPatching || isExecuting || nodes.length === 0}
+                    className="rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/60 transition duration-fast ease-smooth hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+                    title="Change a workflow input (like the URL) and re-run"
+                  >
+                    Change inputs
+                  </button>
+                  {/* Version control right beside Change inputs: open the list of
+                      saved versions and restore any one. Hidden until a chat patch
+                      has produced at least one version. */}
+                  <button
+                    onClick={() => setShowChatVersions((open) => !open)}
+                    disabled={versions.length === 0}
+                    className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium transition duration-fast ease-smooth disabled:opacity-30 ${
+                      showChatVersions
+                        ? 'bg-accent-muted text-accent ring-1 ring-inset ring-accent/25'
+                        : 'text-white/60 hover:bg-white/[0.06] hover:text-white disabled:hover:bg-transparent'
+                    }`}
+                    title="Browse and restore workflow versions"
+                  >
+                    <History className="h-3 w-3" />
+                    {versions.length > 0
+                      ? `${versions[versionIndex]?.label ?? `v${versions.length}`} / ${versions.length}`
+                      : 'Versions'}
+                  </button>
+                </div>
                 <button
-                  onClick={openInputEditor}
-                  disabled={isPatching || isExecuting || nodes.length === 0}
-                  className="px-2.5 py-2 rounded-xl border border-white/10 bg-white/5 text-white/70 text-[10px] font-bold uppercase tracking-[0.16em] hover:bg-white/10 hover:text-white disabled:opacity-30"
-                  title="Change a workflow input (like the URL) and re-run"
+                  onClick={handleWorkflowChatSubmit}
+                  disabled={isPatching}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent text-black shadow-glow transition duration-fast ease-smooth hover:bg-accent-hover disabled:opacity-50 disabled:shadow-none"
+                  title={isPatching ? 'Working…' : 'Send message'}
+                  aria-label={isPatching ? 'Working' : 'Send message'}
                 >
-                  Change inputs
-                </button>
-                {/* Version control right beside Change inputs: open the list of
-                    saved versions and restore any one. Hidden until a chat patch
-                    has produced at least one version. */}
-                <button
-                  onClick={() => setShowChatVersions((open) => !open)}
-                  disabled={versions.length === 0}
-                  className={`flex items-center gap-1 px-2.5 py-2 rounded-xl border text-[10px] font-bold uppercase tracking-[0.16em] disabled:opacity-30 ${
-                    showChatVersions
-                      ? 'border-bolt-accent/40 bg-bolt-accent/10 text-bolt-accent'
-                      : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
-                  }`}
-                  title="Browse and restore workflow versions"
-                >
-                  <History className="w-3 h-3" />
-                  {versions.length > 0
-                    ? `${versions[versionIndex]?.label ?? `v${versions.length}`} / ${versions.length}`
-                    : 'Versions'}
+                  {isPatching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ArrowUp className="h-4 w-4" />
+                  )}
                 </button>
               </div>
-              <button
-                onClick={handleWorkflowChatSubmit}
-                disabled={isPatching}
-                className="px-3 py-2 rounded-xl bg-bolt-accent text-black text-[10px] font-bold uppercase tracking-[0.18em] hover:bg-bolt-accent/90 disabled:opacity-50"
-              >
-                {isPatching ? 'Working' : 'Send'}
-              </button>
             </div>
           </div>
         </aside>

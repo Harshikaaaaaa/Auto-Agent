@@ -9,6 +9,11 @@
  *
  * Fonts are bundled from the @fontsource packages so the browser fetches them
  * from our own origin. That is what lets the CSP drop every Google/CDN origin.
+ *
+ * Beyond the migration, this file carries the product's global craft details:
+ * focus rings, selection colour, scrollbars, the canvas grid, and the
+ * react-flow overrides. See tailwind.config.js for the design language these
+ * follow (layered surfaces, one accent, alpha borders, one motion curve).
  */
 
 /* Self-hosted fonts. @fontsource emits @font-face rules that reference woff2
@@ -29,9 +34,13 @@ body {
   font-family: 'Inter', sans-serif;
   background-color: #050505;
   color: #e5e7eb;
-  letter-spacing: -0.01em;
+  /* Slight negative tracking is what makes Inter read like product UI rather
+     than a document. */
+  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Tabular figures keep counters and durations from jittering as they change. */
+  font-variant-numeric: tabular-nums;
 }
 
 code {
@@ -44,30 +53,67 @@ code {
   overflow: hidden;
 }
 
+/* Text selection picks up the accent instead of the browser default blue. */
+::selection {
+  background: rgba(45, 212, 191, 0.25);
+  color: #ffffff;
+}
+
+/*
+ * Keyboard focus only. `:focus-visible` (not `:focus`) means a mouse click does
+ * not leave a ring behind, while tabbing always shows exactly where you are —
+ * the accessibility detail that separates a polished product from a demo.
+ */
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px #050505,
+    0 0 0 4px rgba(45, 212, 191, 0.55);
+  border-radius: 10px;
+}
+
+/* Inputs get a softer inner ring rather than the doubled outline above. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.18);
+}
+
 /* --- react-flow overrides (migrated from the index.html inline <style>) --- */
 .react-flow__node {
-  border-radius: 12px !important;
+  border-radius: 14px !important;
 }
 
 .react-flow__handle {
-  width: 8px !important;
-  height: 8px !important;
+  width: 9px !important;
+  height: 9px !important;
   background: #2dd4bf !important;
   border: 2px solid #050505 !important;
-  box-shadow: 0 0 10px rgba(45, 212, 191, 0.4);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  transition: box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.react-flow__handle:hover {
+  box-shadow: 0 0 0 5px rgba(45, 212, 191, 0.22);
 }
 
 .react-flow__edge-path {
   stroke-width: 1.5;
-  stroke: #333;
+  stroke: #2f2f33;
+}
+
+/* The selected/animated path reads as the accent, so data flow is legible. */
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: rgba(45, 212, 191, 0.75);
 }
 
 .react-flow__controls {
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.8) !important;
-  border: 1px solid #1a1a1a !important;
-  border-radius: 12px !important;
-  background: rgba(20, 20, 20, 0.8) !important;
-  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.7) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 14px !important;
+  background: rgba(15, 15, 16, 0.82) !important;
+  backdrop-filter: blur(14px);
   overflow: hidden;
   display: flex;
   padding: 4px;
@@ -78,39 +124,53 @@ code {
   border: none !important;
   background: transparent !important;
   fill: #9ca3af !important;
-  border-radius: 6px !important;
+  border-radius: 8px !important;
   width: 32px !important;
   height: 32px !important;
+  transition:
+    background 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    fill 120ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .react-flow__controls-button:hover {
-  background: rgba(255, 255, 255, 0.05) !important;
-  fill: white !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+  fill: #ffffff !important;
 }
 
 .react-flow__attribution {
   display: none;
 }
 
-/* Grid background effect for the canvas. */
+/*
+ * Canvas grid. Softer than the original solid #111 lines: a dotted grid reads
+ * as depth behind the nodes instead of competing with them for attention.
+ */
 .bg-grid {
-  background-image:
-    linear-gradient(to right, #111 1px, transparent 1px),
-    linear-gradient(to bottom, #111 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
 
 /* Glassmorphism for floating panels. */
 .glass-panel {
-  background: rgba(10, 10, 10, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(12, 12, 13, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* Custom scrollbar. */
+/*
+ * Ambient accent wash for the empty/hero state. A single very soft radial
+ * gradient gives the landing view depth without adding a decorative image.
+ */
+.ambient-glow {
+  background-image:
+    radial-gradient(60% 50% at 50% 0%, rgba(45, 212, 191, 0.1) 0%, transparent 70%),
+    radial-gradient(40% 40% at 85% 15%, rgba(129, 140, 248, 0.07) 0%, transparent 70%);
+}
+
+/* Thin, quiet scrollbars that only darken on hover. */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -118,10 +178,16 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #222;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #333;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Firefox equivalent. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }

@@ -1,4 +1,11 @@
 import { env } from '../config/env.js';
+import { emptyUsage, normalizeUsage, sumUsage, usdToMicros } from './usage.js';
+
+/** Coerce a possibly-missing numeric field to a non-negative integer. */
+function intFrom(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
 
 /**
  * Provider adapters for LLM calls.
@@ -116,9 +123,13 @@ async function callOpenRouter({ prompt, model, jsonMode }) {
     });
   }
 
+  const resolvedModel = model || env.OPENROUTER_MODEL;
   const body = {
-    model: model || env.OPENROUTER_MODEL,
+    model: resolvedModel,
     messages: [{ role: 'user', content: prompt }],
+    // Ask OpenRouter to include usage + the upstream dollar cost in the
+    // response, so billing does not need a second /generation lookup.
+    usage: { include: true },
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
 
@@ -146,7 +157,20 @@ async function callOpenRouter({ prompt, model, jsonMode }) {
       retryable: true,
     });
   }
-  return content;
+
+  const u = data?.usage ?? {};
+  const usage = normalizeUsage({
+    provider: 'openrouter',
+    model: resolvedModel,
+    inputTokens: u.prompt_tokens,
+    cachedInputTokens: u.prompt_tokens_details?.cached_tokens,
+    outputTokens: u.completion_tokens,
+    reasoningTokens: u.completion_tokens_details?.reasoning_tokens,
+    // OpenRouter reports the real upstream cost in USD when usage.include is set.
+    providerCostUsdMicros: usdToMicros(u.cost),
+    requestId: data?.id,
+  });
+  return { content, usage };
 }
 
 // -------------------------------------------------------------------- Gemini
@@ -192,7 +216,24 @@ async function callGemini({ prompt, model, jsonMode }) {
       { status: 502, provider: 'gemini', retryable: !blockReason },
     );
   }
-  return content;
+
+  // Gemini reports token counts, not a dollar cost — leave cost null and let the
+  // rate card derive it from tokens. `promptTokenCount` INCLUDES cached tokens,
+  // so subtract the cached count to get the uncached input the rate card bills
+  // at the full input price (cached tokens bill at the cached price).
+  const m = data?.usageMetadata ?? {};
+  const cached = intFrom(m.cachedContentTokenCount);
+  const totalPrompt = intFrom(m.promptTokenCount);
+  const usage = normalizeUsage({
+    provider: 'gemini',
+    model: modelId,
+    inputTokens: Math.max(0, totalPrompt - cached),
+    cachedInputTokens: cached,
+    outputTokens: m.candidatesTokenCount,
+    reasoningTokens: m.thoughtsTokenCount,
+    providerCostUsdMicros: null,
+  });
+  return { content, usage };
 }
 
 // -------------------------------------------------------------------- Ollama
@@ -226,13 +267,84 @@ async function callOllama({ prompt, model, jsonMode }) {
       retryable: true,
     });
   }
-  return content;
+
+  // Ollama is local and free; token counts are captured for analytics, but the
+  // rate card prices it at zero.
+  const usage = normalizeUsage({
+    provider: 'ollama',
+    model: model || env.OLLAMA_MODEL,
+    inputTokens: data?.prompt_eval_count,
+    outputTokens: data?.eval_count,
+    providerCostUsdMicros: 0,
+  });
+  return { content, usage };
+}
+
+// -------------------------------------------------------------------- OpenAI
+
+async function callOpenAI({ prompt, model, jsonMode }) {
+  if (!env.OPENAI_API_KEY) {
+    throw new ProviderError('OpenAI is not configured on the server.', {
+      status: 503,
+      provider: 'openai',
+    });
+  }
+
+  const resolvedModel = model || env.OPENAI_MODEL;
+  const body = {
+    model: resolvedModel,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  if (jsonMode) body.response_format = { type: 'json_object' };
+
+  const res = await fetchWithTimeout(
+    `${env.OPENAI_BASE_URL}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+    'openai',
+  );
+
+  if (!res.ok) throw providerHttpError('openai', res.status, await res.text());
+
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new ProviderError('OpenAI returned an empty response.', {
+      status: 502,
+      provider: 'openai',
+      retryable: true,
+    });
+  }
+
+  // OpenAI reports token counts, not a dollar cost. prompt_tokens INCLUDES the
+  // cached portion, so subtract it for the full-price uncached input.
+  const u = data?.usage ?? {};
+  const cached = intFrom(u.prompt_tokens_details?.cached_tokens);
+  const promptTokens = intFrom(u.prompt_tokens);
+  const usage = normalizeUsage({
+    provider: 'openai',
+    model: resolvedModel,
+    inputTokens: Math.max(0, promptTokens - cached),
+    cachedInputTokens: cached,
+    outputTokens: u.completion_tokens,
+    reasoningTokens: u.completion_tokens_details?.reasoning_tokens,
+    providerCostUsdMicros: null,
+    requestId: data?.id,
+  });
+  return { content, usage };
 }
 
 const PROVIDERS = {
   openrouter: callOpenRouter,
   gemini: callGemini,
   ollama: callOllama,
+  openai: callOpenAI,
 };
 
 /**
@@ -246,6 +358,7 @@ export function resolveProvider(requested) {
   if (!PROVIDERS[requested]) return env.AI_PROVIDER;
   if (requested === 'openrouter' && !env.OPENROUTER_API_KEY) return env.AI_PROVIDER;
   if (requested === 'gemini' && !env.GEMINI_API_KEY) return env.AI_PROVIDER;
+  if (requested === 'openai' && !env.OPENAI_API_KEY) return env.AI_PROVIDER;
   return requested;
 }
 
@@ -258,14 +371,16 @@ export function defaultModelFor(provider) {
       return env.GEMINI_MODEL;
     case 'ollama':
       return env.OLLAMA_MODEL;
+    case 'openai':
+      return env.OPENAI_MODEL;
     default:
       return env.OPENROUTER_MODEL;
   }
 }
 
 /**
- * Call the resolved provider and return raw text.
- * @returns {Promise<{ text: string, provider: string, model: string }>}
+ * Call the resolved provider and return raw text plus normalized usage.
+ * @returns {Promise<{ text: string, provider: string, model: string, usage: import('./usage.js').NormalizedUsage }>}
  */
 export async function callProvider({ prompt, provider, model, jsonMode = true }) {
   const resolved = resolveProvider(provider);
@@ -277,8 +392,13 @@ export async function callProvider({ prompt, provider, model, jsonMode = true })
     });
   }
   const resolvedModel = model || defaultModelFor(resolved);
-  const text = await call({ prompt, model: resolvedModel, jsonMode });
-  return { text, provider: resolved, model: resolvedModel };
+  const result = await call({ prompt, model: resolvedModel, jsonMode });
+  return {
+    text: result.content,
+    provider: resolved,
+    model: resolvedModel,
+    usage: result.usage ?? emptyUsage(resolved, resolvedModel),
+  };
 }
 
 /**
@@ -288,12 +408,15 @@ export async function callProvider({ prompt, provider, model, jsonMode = true })
  */
 export async function callProviderForJson({ prompt, provider, model }) {
   let lastText = '';
+  // Both attempts are billable provider calls, so their usage sums.
+  let usage = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = await callProvider({ prompt, provider, model, jsonMode: true });
     lastText = result.text;
+    usage = sumUsage(usage, result.usage);
     const parsed = parseJsonLoose(result.text);
     if (parsed && typeof parsed === 'object') {
-      return { ...result, json: parsed, attempts: attempt + 1 };
+      return { ...result, usage, json: parsed, attempts: attempt + 1 };
     }
   }
   throw new ProviderError('The model did not return valid JSON after two attempts.', {
@@ -335,6 +458,14 @@ export async function probeConfiguredModel() {
         `${env.GEMINI_BASE_URL}/models/${encodeURIComponent(model)}`,
         { headers: { 'x-goog-api-key': env.GEMINI_API_KEY } },
         'gemini',
+      );
+      result.ok = res.ok;
+      result.detail = res.ok ? 'model resolved' : `provider returned ${res.status} for this model`;
+    } else if (provider === 'openai') {
+      const res = await fetchWithTimeout(
+        `${env.OPENAI_BASE_URL}/models/${encodeURIComponent(model)}`,
+        { headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` } },
+        'openai',
       );
       result.ok = res.ok;
       result.detail = res.ok ? 'model resolved' : `provider returned ${res.status} for this model`;

@@ -282,4 +282,145 @@ describe('provider adapters', () => {
       expect(error.retryable).toBe(false);
     });
   });
+
+  describe('usage capture', () => {
+    it('parses OpenRouter tokens + dollar cost and asks for usage.include', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          id: 'gen-abc123',
+          choices: [{ message: { content: '{"a":1}' } }],
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 340,
+            prompt_tokens_details: { cached_tokens: 200 },
+            completion_tokens_details: { reasoning_tokens: 50 },
+            cost: 0.021, // USD
+          },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const { callProvider } = await loadProviders();
+
+      const result = await callProvider({ prompt: 'hi' });
+      expect(result.usage).toMatchObject({
+        provider: 'openrouter',
+        inputTokens: 1200,
+        cachedInputTokens: 200,
+        outputTokens: 340,
+        reasoningTokens: 50,
+        providerCostUsdMicros: 21000, // 0.021 * 1e6
+        requestId: 'gen-abc123',
+      });
+      // The request opts in to usage reporting.
+      const [, options] = fetchMock.mock.calls[0];
+      expect(JSON.parse(options.body).usage).toEqual({ include: true });
+    });
+
+    it('parses Gemini token counts (cost null) and splits cached from input', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: '{"a":1}' }] } }],
+          usageMetadata: {
+            promptTokenCount: 1000, // INCLUDES the 300 cached
+            cachedContentTokenCount: 300,
+            candidatesTokenCount: 500,
+            thoughtsTokenCount: 80,
+          },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const { callProvider } = await loadProviders({
+        AI_PROVIDER: 'gemini',
+        GEMINI_API_KEY: 'gem-key-value-123456',
+      });
+
+      const result = await callProvider({ prompt: 'hi' });
+      expect(result.usage).toMatchObject({
+        provider: 'gemini',
+        inputTokens: 700, // 1000 - 300 cached
+        cachedInputTokens: 300,
+        outputTokens: 500,
+        reasoningTokens: 80,
+        providerCostUsdMicros: null,
+      });
+    });
+
+    it('parses OpenAI token counts (cost null)', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          id: 'chatcmpl-1',
+          choices: [{ message: { content: '{"a":1}' } }],
+          usage: {
+            prompt_tokens: 800,
+            completion_tokens: 200,
+            prompt_tokens_details: { cached_tokens: 100 },
+          },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const { callProvider } = await loadProviders({
+        AI_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'sk-openai-test-value-0123456789',
+      });
+
+      const result = await callProvider({ prompt: 'hi' });
+      expect(result.usage).toMatchObject({
+        provider: 'openai',
+        inputTokens: 700, // 800 - 100 cached
+        cachedInputTokens: 100,
+        outputTokens: 200,
+        providerCostUsdMicros: null,
+        requestId: 'chatcmpl-1',
+      });
+    });
+
+    it('reports Ollama tokens with zero cost (local/free)', async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          message: { content: '{"a":1}' },
+          prompt_eval_count: 40,
+          eval_count: 90,
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const { callProvider } = await loadProviders({ AI_PROVIDER: 'ollama' });
+
+      const result = await callProvider({ prompt: 'hi' });
+      expect(result.usage).toMatchObject({
+        provider: 'ollama',
+        inputTokens: 40,
+        outputTokens: 90,
+        providerCostUsdMicros: 0,
+      });
+    });
+
+    it('sums usage across a two-attempt JSON retry', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            id: 'g1',
+            choices: [{ message: { content: 'not json' } }],
+            usage: { prompt_tokens: 100, completion_tokens: 10, cost: 0.001 },
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            id: 'g2',
+            choices: [{ message: { content: '{"ok":true}' } }],
+            usage: { prompt_tokens: 120, completion_tokens: 12, cost: 0.002 },
+          }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const { callProviderForJson } = await loadProviders();
+
+      const result = await callProviderForJson({ prompt: 'hi' });
+      expect(result.attempts).toBe(2);
+      // Both billable calls sum.
+      expect(result.usage.inputTokens).toBe(220);
+      expect(result.usage.outputTokens).toBe(22);
+      expect(result.usage.providerCostUsdMicros).toBe(3000); // (0.001 + 0.002) * 1e6
+      expect(result.usage.requestId).toBe('g2');
+    });
+  });
 });

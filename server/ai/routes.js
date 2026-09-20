@@ -203,6 +203,13 @@ async function observeAiCall(req, kind, args) {
         model: result.model,
         attempts: result.attempts,
         durationMs: Date.now() - startedAt,
+        // Token counts only — never prompt or completion text. Safe to log and
+        // needed to trace what the billing engine will charge for.
+        inputTokens: result.usage?.inputTokens,
+        cachedInputTokens: result.usage?.cachedInputTokens,
+        outputTokens: result.usage?.outputTokens,
+        reasoningTokens: result.usage?.reasoningTokens,
+        providerCostUsdMicros: result.usage?.providerCostUsdMicros,
         outcome: 'ok',
       },
       'ai provider call',

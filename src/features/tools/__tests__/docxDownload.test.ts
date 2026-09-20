@@ -148,4 +148,37 @@ describe('convert to DOCX and download', () => {
     expect(String(docx.saved_filename)).toMatch(/\.docx$/);
     expect(Number(docx.bytes)).toBeGreaterThan(String(merged.markdown).length);
   });
+
+  it('saves .txt when the label asks for a Text File, even with a .md suggestion in state', async () => {
+    // The reported case: "Download Emails as Text File" reads a formatted list
+    // and an upstream `suggested_filename` of "emails.md". The label says TEXT,
+    // so the file must be .txt with text/plain content — not .md. Before the
+    // fix the label hint had no "text"/"txt" case and the node fell back to .md.
+    const result = await runAction('files', 'download_file', {
+      content: 'Sender: Google\nSubject: Security alert\n',
+      suggested_filename: 'emails.md',
+      title: 'Emails',
+      label: 'Download Emails as Text File',
+    });
+
+    expect(result.downloaded).toBe(true);
+    expect(String(result.saved_filename)).toMatch(/\.txt$/);
+    expect(String(result.saved_filename)).not.toMatch(/\.md$/);
+    expect(clicked[0].download).toMatch(/\.txt$/);
+  });
+
+  it('detectExtensionFromLabel keeps more specific formats over plain "text"', async () => {
+    // "Word text" is a docx request, not a plain-text one; the specific rules
+    // run before the "text" fallback so a mislabel does not downgrade a binary.
+    const wordDoc = await runAction('content', 'to_docx', {
+      title: 'Doc',
+      extracted_text: 'body',
+    });
+    const asWord = await runAction('files', 'download_file', {
+      docx_base64: wordDoc.docx_base64,
+      suggested_filename: wordDoc.suggested_filename,
+      label: 'Download Word text document',
+    });
+    expect(String(asWord.saved_filename)).toMatch(/\.docx$/);
+  });
 });

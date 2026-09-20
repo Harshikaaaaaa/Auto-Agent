@@ -26,12 +26,19 @@ const BINARY_EXTENSIONS = new Set(['docx', 'pdf']);
  */
 function detectExtensionFromLabel(label: string): string | undefined {
   const text = label.toLowerCase();
+  // More specific formats first, so "Download Word text" stays docx and
+  // "Download Markdown text" stays md rather than being caught by the plain
+  // "text" rule below.
   if (text.includes('docx') || text.includes('word')) return 'docx';
   if (text.includes('pdf')) return 'pdf';
   if (text.includes('markdown') || /\bmd\b/.test(text)) return 'md';
   if (text.includes('csv')) return 'csv';
   if (text.includes('json')) return 'json';
   if (text.includes('html')) return 'html';
+  // "Download Emails as Text File" / "…as txt": a plain-text download. Without
+  // this the label hint was undefined and the node fell back to .md, so a
+  // request for a .txt file silently produced a .md one.
+  if (text.includes('text') || /\btxt\b/.test(text)) return 'txt';
   return undefined;
 }
 

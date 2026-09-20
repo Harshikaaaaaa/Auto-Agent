@@ -68,11 +68,13 @@ export async function loadDbModules(vi, overrides = {}) {
   const repository = await import('../db/workflowRepository.js');
   const credentials = await import('../db/credentialRepository.js');
   const runs = await import('../db/runRepository.js');
+  const users = await import('../db/userRepository.js');
+  const signupGrant = await import('../billing/signupGrant.js');
 
   await pool.ensureDatabaseExists();
   await migrations.runMigrations();
 
-  return { pool, migrations, repository, credentials, runs };
+  return { pool, migrations, repository, credentials, runs, users, signupGrant };
 }
 
 /**
@@ -86,6 +88,18 @@ export async function truncateAll(pool) {
   await pool.getPool().query('DELETE FROM workflow_runs');
   await pool.getPool().query('DELETE FROM tool_credentials');
   await pool.getPool().query('DELETE FROM workflows');
+  // Billing tables (migrations 005-007). Children before parents; all cascade
+  // from owners, but delete explicitly so this helper does not depend on a given
+  // suite having run those migrations. Seed tables (plans/packages/rates) are
+  // NOT truncated — they are reference data re-seeded idempotently.
+  await pool.getPool().query('DELETE FROM coupon_redemptions');
+  await pool.getPool().query('DELETE FROM ai_usage');
+  await pool.getPool().query('DELETE FROM credit_reservations');
+  await pool.getPool().query('DELETE FROM credit_transactions');
+  await pool.getPool().query('DELETE FROM subscriptions');
+  await pool.getPool().query('DELETE FROM payments');
+  await pool.getPool().query('DELETE FROM credit_wallets');
+  await pool.getPool().query('DELETE FROM users');
   await pool.getPool().query('DELETE FROM owners');
 }
 

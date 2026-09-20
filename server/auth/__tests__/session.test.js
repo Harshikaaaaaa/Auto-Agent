@@ -74,7 +74,7 @@ describe('session tokens', () => {
     });
 
     const issuedAt = Date.now();
-    const token = createSessionToken(undefined, issuedAt);
+    const token = createSessionToken(undefined, 'user', issuedAt);
 
     // Valid just after issue, invalid an hour and a second later.
     expect(verifySessionToken(token, issuedAt + 1000)).not.toBeNull();

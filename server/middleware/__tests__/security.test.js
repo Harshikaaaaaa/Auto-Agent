@@ -136,16 +136,17 @@ async function req(path, { method = 'GET', body, origin, cookie } = {}) {
 }
 
 /** Sign in and return the session cookie header value. */
-async function signIn() {
-  const res = await realFetch(`${baseUrl}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: PASSWORD }),
-  });
-  expect(res.status).toBe(200);
-  const setCookie = res.headers.get('set-cookie');
-  expect(setCookie).toBeTruthy();
-  return setCookie.split(';')[0];
+/**
+ * A valid session cookie for the protected-route tests.
+ *
+ * Minted directly with the same signing key the app uses, rather than by
+ * POSTing credentials — login now verifies an email+password against the users
+ * table, and this middleware suite runs without a database. The cookie is what
+ * every protected route actually checks, so this exercises the guard faithfully.
+ */
+function signIn() {
+  const token = mods.session.createSessionToken('test-owner', 'user');
+  return `${mods.session.SESSION_COOKIE_NAME}=${token}`;
 }
 
 describe('unauthenticated access', () => {
@@ -178,55 +179,45 @@ describe('unauthenticated access', () => {
 });
 
 describe('login', () => {
-  it('rejects a wrong password without revealing anything', async () => {
-    const { status, json } = await req('/api/auth/login', {
-      method: 'POST',
-      body: { password: 'wrong-password-value' },
-    });
-    expect(status).toBe(401);
-    expect(json.error).toBe('invalid_credentials');
-    expect(json.message).toBe('Incorrect password.');
-  });
+  // NOTE: credential verification (wrong-password / success) now hits the users
+  // table, so those assertions live in the DB-backed auth route tests. This
+  // middleware suite covers only what is DB-independent: request validation,
+  // cookie flags, session gating, and the rate limiter.
 
-  it('rejects a missing password with 400', async () => {
+  it('rejects a login missing email/password with 400 (before any DB call)', async () => {
     const { status } = await req('/api/auth/login', { method: 'POST', body: {} });
     expect(status).toBe(400);
   });
 
-  it('issues an httpOnly, SameSite=Lax cookie on success', async () => {
-    const res = await realFetch(`${baseUrl}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: PASSWORD }),
-    });
-    const setCookie = res.headers.get('set-cookie') ?? '';
-
-    expect(res.status).toBe(200);
-    // httpOnly is what stops an XSS from reading the session.
-    expect(setCookie).toMatch(/HttpOnly/i);
-    // SameSite=Lax, not Strict: it still withholds the cookie on cross-site
-    // POST (so CSRF on the mutating endpoints stays closed), while allowing the
-    // top-level GET navigation back from Google's OAuth consent screen to the
-    // session-gated callback. See cookieOptions() in server/auth/session.js.
-    expect(setCookie).toMatch(/SameSite=Lax/i);
-    expect(setCookie).not.toMatch(/SameSite=Strict/i);
-    expect(setCookie).toMatch(/Path=\//i);
+  it('issues an httpOnly, SameSite=Lax cookie via setSessionCookie', async () => {
+    // Exercise the app's own cookie options directly, independent of the login
+    // credential path (which needs the users table).
+    const captured = [];
+    const fakeRes = {
+      cookie: (name, value, opts) => captured.push({ name, value, opts }),
+    };
+    mods.session.setSessionCookie(fakeRes, 'test-owner', 'user');
+    expect(captured).toHaveLength(1);
+    const { opts } = captured[0];
+    // httpOnly stops an XSS from reading the session.
+    expect(opts.httpOnly).toBe(true);
+    // SameSite=Lax, not Strict: withholds the cookie on cross-site POST (CSRF on
+    // mutating endpoints stays closed) while allowing the top-level GET back from
+    // Google's OAuth consent screen. See cookieOptions() in session.js.
+    expect(opts.sameSite).toBe('lax');
+    expect(opts.path).toBe('/');
   });
 
   it('grants access to protected routes once signed in', async () => {
-    const cookie = await signIn();
-
+    const cookie = signIn();
     const workflows = await req('/api/workflows', { cookie });
     expect(workflows.status).toBe(200);
-
-    const me = await req('/api/auth/me', { cookie });
-    expect(me.status).toBe(200);
-    expect(me.json.user.id).toBe('operator');
   });
 
   it('throttles repeated login attempts', async () => {
     // Isolated app with its own limiter and its own counter store, so draining
-    // the budget here cannot make the other tests fail.
+    // the budget here cannot make the other tests fail. The limiter runs BEFORE
+    // the handler, so this holds regardless of what the credential check does.
     const app = express();
     app.set('trust proxy', 1);
     app.use(express.json());
@@ -240,36 +231,29 @@ describe('login', () => {
     const url = `http://127.0.0.1:${isolated.address().port}/api/auth/login`;
 
     try {
+      // Missing-field requests are rejected before any DB call, so the first
+      // few return 400; once the per-IP budget is spent the limiter returns 429.
       const statuses = [];
-      for (let i = 0; i < 5; i += 1) {
+      for (let i = 0; i < 6; i += 1) {
         const res = await realFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: 'still-the-wrong-password' }),
+          body: JSON.stringify({}),
         });
         statuses.push(res.status);
       }
-
-      // First 3 are rejected on credentials, the rest are throttled.
-      expect(statuses.slice(0, 3)).toEqual([401, 401, 401]);
+      expect(statuses.slice(0, 3)).toEqual([400, 400, 400]);
       expect(statuses).toContain(429);
 
       const limited = await realFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'still-the-wrong-password' }),
+        body: JSON.stringify({}),
       });
       expect(limited.status).toBe(429);
       const body = await limited.json();
       expect(body.error).toBe('rate_limited');
       expect(body.retryable).toBe(true);
-      // A correct password must also be throttled, or the limit is bypassable.
-      const evenCorrect = await realFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: PASSWORD }),
-      });
-      expect(evenCorrect.status).toBe(429);
     } finally {
       await new Promise((resolve) => isolated.close(resolve));
     }

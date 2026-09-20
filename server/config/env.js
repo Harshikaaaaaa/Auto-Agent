@@ -110,6 +110,29 @@ const schema = z
     SESSION_TTL_HOURS: intWithDefault(12, { min: 1, max: 720 }),
     /** Send the Secure cookie flag. Required in production; off for plain-HTTP dev. */
     SESSION_COOKIE_SECURE: booleanish(undefined),
+    /**
+     * Bootstrap the first admin account. On boot, if a legacy 'operator' owner
+     * exists with no users row, a user with this email + APP_PASSWORD is created
+     * as an admin, keeping owner_id='operator' so existing workflows and the
+     * Google connection survive the move to multi-user. Optional: unset skips
+     * the bootstrap.
+     */
+    ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
+
+    // ---- Billing / credits (SaaS). All money is integer; see saas.md. ----
+    /** Signup credits granted to a new Free user. */
+    SIGNUP_FREE_CREDITS: intWithDefault(1000, { min: 0, max: 10_000_000 }),
+    /** Billing FX: paise per USD. ₹100/USD -> 10000. */
+    BILLING_EXCHANGE_RATE_PAISE_PER_USD: intWithDefault(10_000, { min: 1, max: 10_000_000 }),
+    /** Default direct-API markup, stored ×10 (2.5x -> 25). */
+    DEFAULT_MARKUP_X10: intWithDefault(25, { min: 10, max: 1_000 }),
+    /** OpenRouter platform fee in basis points (5.5% -> 550). */
+    OPENROUTER_FEE_BPS: intWithDefault(550, { min: 0, max: 10_000 }),
+
+    // ---- Payments (Razorpay). Built in Phase 4; optional so boot works now. ----
+    RAZORPAY_KEY_ID: optionalSecret(),
+    RAZORPAY_KEY_SECRET: optionalSecret(),
+    RAZORPAY_WEBHOOK_SECRET: optionalSecret(),
 
     // ---- Rate limiting (per IP) ----
     RATE_LIMIT_WINDOW_MS: intWithDefault(60_000, { min: 1_000, max: 3_600_000 }),
@@ -152,7 +175,7 @@ const schema = z
     DB_AUTO_MIGRATE: booleanish(true),
 
     // ---- AI provider selection ----
-    AI_PROVIDER: z.enum(['openrouter', 'gemini', 'ollama']).default('openrouter'),
+    AI_PROVIDER: z.enum(['openrouter', 'gemini', 'ollama', 'openai']).default('openrouter'),
     AI_REQUEST_TIMEOUT_MS: intWithDefault(60_000, { min: 1_000, max: 300_000 }),
     /** Allow the browser to request a provider other than AI_PROVIDER. */
     AI_ALLOW_CLIENT_PROVIDER_OVERRIDE: booleanish(true),
@@ -168,6 +191,10 @@ const schema = z
 
     OLLAMA_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
     OLLAMA_MODEL: z.string().min(1).default('deepseek-r1:8b'),
+
+    OPENAI_API_KEY: optionalSecret(),
+    OPENAI_MODEL: z.string().min(1).default('gpt-4o-mini'),
+    OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
 
     // ---- Outbound fetch (the web.fetch capability) ----
     /** Longest a single hop may take. */
@@ -447,6 +474,7 @@ export function availableProviders() {
   const available = [];
   if (env.OPENROUTER_API_KEY) available.push('openrouter');
   if (env.GEMINI_API_KEY) available.push('gemini');
+  if (env.OPENAI_API_KEY) available.push('openai');
   // Ollama needs no key; reachability is probed at startup instead.
   available.push('ollama');
   return available;
@@ -463,6 +491,7 @@ export function publicAiConfig() {
     providers: {
       openrouter: { configured: Boolean(env.OPENROUTER_API_KEY), model: env.OPENROUTER_MODEL },
       gemini: { configured: Boolean(env.GEMINI_API_KEY), model: env.GEMINI_MODEL },
+      openai: { configured: Boolean(env.OPENAI_API_KEY), model: env.OPENAI_MODEL },
       ollama: { configured: true, model: env.OLLAMA_MODEL },
     },
   };

@@ -40,6 +40,21 @@ export const FETCH_PATHS = ['/api/fetch'];
 export const CONNECTOR_PATHS = ['/api/oauth', '/api/google'];
 
 /**
+ * Billing & wallet endpoints. Session-gated: they read a user's balances, spend
+ * credits, and start payments, so they must be bound to whoever is signed in.
+ * (The Razorpay webhook is public-but-signature-verified and is registered
+ * BEFORE this guard — see server/payments/routes.js.)
+ */
+export const BILLING_PATHS = ['/api/billing'];
+
+/**
+ * Admin console APIs. Session-gated here; the admin ROLE check is a second
+ * middleware (requireAdmin) layered on top, so a signed-in non-admin still gets
+ * 403 rather than reaching the handler.
+ */
+export const ADMIN_PATHS = ['/api/admin'];
+
+/**
  * Paths that must stay reachable without a session.
  * Health probes need to work before anyone signs in, and the auth endpoints are
  * how a session is obtained in the first place.
@@ -47,8 +62,10 @@ export const CONNECTOR_PATHS = ['/api/oauth', '/api/google'];
 export const PUBLIC_PATHS = [
   '/healthz',
   '/readyz',
+  '/api/auth/signup',
   '/api/auth/login',
   '/api/auth/logout',
+  '/api/auth/verify',
   '/api/auth/me',
 ];
 
@@ -59,4 +76,6 @@ export const ALL_PROTECTED_PATHS = [
   ...WHATSAPP_PATHS,
   ...FETCH_PATHS,
   ...CONNECTOR_PATHS,
+  ...BILLING_PATHS,
+  ...ADMIN_PATHS,
 ];

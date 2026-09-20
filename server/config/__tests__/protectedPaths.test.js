@@ -3,8 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  ADMIN_PATHS,
   AI_PATHS,
   ALL_PROTECTED_PATHS,
+  BILLING_PATHS,
   PUBLIC_PATHS,
   WHATSAPP_PATHS,
   WORKFLOW_PATHS,
@@ -35,6 +37,14 @@ describe('protected paths', () => {
 
   it('covers the AI routes', () => {
     expect(AI_PATHS).toContain('/api/ai');
+  });
+
+  it('gates billing and admin', () => {
+    // Billing reads balances and spends credits; admin manages other users.
+    expect(BILLING_PATHS).toContain('/api/billing');
+    expect(ADMIN_PATHS).toContain('/api/admin');
+    expect(ALL_PROTECTED_PATHS).toContain('/api/billing');
+    expect(ALL_PROTECTED_PATHS).toContain('/api/admin');
   });
 
   it('covers the outbound fetch route', () => {

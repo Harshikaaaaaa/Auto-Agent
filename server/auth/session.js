@@ -20,6 +20,17 @@ import { env } from '../config/env.js';
 
 export const SESSION_COOKIE_NAME = 'autoagent_session';
 
+/** A pragmatic email check for the signup/login handle. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * A well-formed scrypt hash of a value no one uses, so the login path can run a
+ * verify even when the account does not exist — keeping the timing of "no such
+ * user" indistinguishable from "wrong password". (scrypt$N$r$p$salt$hash)
+ */
+const DUMMY_HASH =
+  'scrypt$131072$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+
 /** Subject used when auth is disabled for local development. */
 const DEV_SUBJECT = 'local-dev';
 /** Subject for the single configured operator. */
@@ -53,9 +64,10 @@ export function safeCompare(a, b) {
 }
 
 /** Build a signed session token for a subject. */
-export function createSessionToken(subject = OPERATOR_SUBJECT, now = Date.now()) {
+export function createSessionToken(subject = OPERATOR_SUBJECT, role = 'user', now = Date.now()) {
   const payload = {
     sub: subject,
+    role: role === 'admin' ? 'admin' : 'user',
     iat: Math.floor(now / 1000),
     exp: Math.floor(now / 1000) + env.SESSION_TTL_HOURS * 3600,
   };
@@ -95,6 +107,8 @@ export function verifySessionToken(token, now = Date.now()) {
 
   if (!payload?.sub || typeof payload.exp !== 'number') return null;
   if (payload.exp * 1000 <= now) return null;
+  // A token minted before roles existed has no `role`; treat it as a plain user.
+  if (payload.role !== 'admin') payload.role = 'user';
 
   return payload;
 }
@@ -120,8 +134,8 @@ function cookieOptions() {
   };
 }
 
-export function setSessionCookie(res, subject = OPERATOR_SUBJECT) {
-  res.cookie(SESSION_COOKIE_NAME, createSessionToken(subject), cookieOptions());
+export function setSessionCookie(res, subject = OPERATOR_SUBJECT, role = 'user') {
+  res.cookie(SESSION_COOKIE_NAME, createSessionToken(subject, role), cookieOptions());
 }
 
 export function clearSessionCookie(res) {
@@ -134,11 +148,12 @@ export function clearSessionCookie(res) {
  */
 export function attachSession(req, _res, next) {
   if (!env.AUTH_ENABLED) {
-    req.session = { sub: DEV_SUBJECT, authDisabled: true };
+    // Dev bypass is admin so a local server can reach every route.
+    req.session = { sub: DEV_SUBJECT, role: 'admin', authDisabled: true };
     return next();
   }
   const payload = verifySessionToken(req.cookies?.[SESSION_COOKIE_NAME]);
-  req.session = payload ? { sub: payload.sub, exp: payload.exp } : null;
+  req.session = payload ? { sub: payload.sub, role: payload.role, exp: payload.exp } : null;
   return next();
 }
 
@@ -151,7 +166,7 @@ export function attachSession(req, _res, next) {
  */
 export function requireSession(req, res, next) {
   if (!env.AUTH_ENABLED) {
-    req.session = { sub: DEV_SUBJECT, authDisabled: true };
+    req.session = { sub: DEV_SUBJECT, role: 'admin', authDisabled: true };
     return next();
   }
 
@@ -163,35 +178,127 @@ export function requireSession(req, res, next) {
     });
   }
 
-  req.session = { sub: payload.sub, exp: payload.exp };
+  req.session = { sub: payload.sub, role: payload.role, exp: payload.exp };
   return next();
 }
 
 /**
- * Auth routes.
+ * Reject the request unless the session belongs to an admin.
+ *
+ * Composes AFTER requireSession (which sets req.session). A missing or
+ * non-admin session gets 403 — deliberately the same shape for both so a
+ * probe cannot distinguish "not logged in" from "not an admin".
+ */
+export function requireAdmin(req, res, next) {
+  if (req.session?.role !== 'admin') {
+    return res.status(403).json({
+      error: 'forbidden',
+      message: 'Administrator access is required.',
+    });
+  }
+  return next();
+}
+
+/**
+ * Auth routes: email + password accounts backed by the users table.
+ *
+ * The legacy single-operator `APP_PASSWORD` login is gone; the operator is now
+ * a bootstrapped admin *user* (see server/db/bootstrapAdmin.js) and signs in
+ * with an email like everyone else. When AUTH_ENABLED is false the dev bypass
+ * still short-circuits every route with a synthetic admin session.
+ *
  * @param {import('express').Express} app
  * @param {{ loginLimiter?: import('express').RequestHandler }} options
  */
 export function setupAuthRoutes(app, { loginLimiter } = {}) {
   const limiters = loginLimiter ? [loginLimiter] : [];
 
-  app.post('/api/auth/login', ...limiters, (req, res) => {
+  app.post('/api/auth/signup', ...limiters, async (req, res) => {
     if (!env.AUTH_ENABLED) {
-      return res.json({ authenticated: true, user: { id: DEV_SUBJECT }, authDisabled: true });
+      return res.json({ authenticated: true, user: { id: DEV_SUBJECT, role: 'admin' } });
     }
-
+    const email = req.body?.email;
     const password = req.body?.password;
-    if (typeof password !== 'string' || password.length === 0) {
-      return res.status(400).json({ error: 'invalid_request', message: 'Password is required.' });
+    if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
+      return res
+        .status(400)
+        .json({ error: 'invalid_request', message: 'A valid email is required.' });
+    }
+    if (typeof password !== 'string' || password.length < 8) {
+      return res
+        .status(400)
+        .json({ error: 'invalid_request', message: 'Password must be at least 8 characters.' });
     }
 
-    if (!safeCompare(password, env.APP_PASSWORD)) {
-      // Deliberately generic: do not reveal whether a password was close.
-      return res.status(401).json({ error: 'invalid_credentials', message: 'Incorrect password.' });
+    try {
+      const { createUser } = await import('../db/userRepository.js');
+      const { grantSignupCredits } = await import('../billing/signupGrant.js');
+      const { user } = await createUser({ email, password, role: 'user' });
+      // A new account gets its wallet, free signup credits, and Free plan.
+      await grantSignupCredits(user.ownerId);
+      setSessionCookie(res, user.ownerId, user.role);
+      return res.status(201).json({
+        authenticated: true,
+        user: { id: user.ownerId, email: user.email, role: user.role },
+      });
+    } catch (err) {
+      if (err?.name === 'EmailTakenError') {
+        return res.status(409).json({ error: 'email_taken', message: err.message });
+      }
+      return res
+        .status(500)
+        .json({ error: 'internal_error', message: 'Could not create the account.' });
+    }
+  });
+
+  app.post('/api/auth/login', ...limiters, async (req, res) => {
+    if (!env.AUTH_ENABLED) {
+      return res.json({ authenticated: true, user: { id: DEV_SUBJECT, role: 'admin' } });
     }
 
-    setSessionCookie(res, OPERATOR_SUBJECT);
-    return res.json({ authenticated: true, user: { id: OPERATOR_SUBJECT } });
+    const email = req.body?.email;
+    const password = req.body?.password;
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+      return res
+        .status(400)
+        .json({ error: 'invalid_request', message: 'Email and password are required.' });
+    }
+
+    const { findAuthByEmail } = await import('../db/userRepository.js');
+    const { verifyPassword } = await import('./password.js');
+    const row = await findAuthByEmail(email);
+    // Verify against a dummy hash even when the user is absent, so a missing
+    // account and a wrong password take the same time (no user enumeration).
+    const ok = row
+      ? verifyPassword(password, row.password_hash)
+      : verifyPassword(password, DUMMY_HASH) && false;
+    if (!row || !ok) {
+      return res
+        .status(401)
+        .json({ error: 'invalid_credentials', message: 'Incorrect email or password.' });
+    }
+    if (row.status !== 'active') {
+      return res
+        .status(403)
+        .json({ error: 'account_disabled', message: 'This account is not active.' });
+    }
+
+    setSessionCookie(res, row.owner_id, row.role);
+    return res.json({
+      authenticated: true,
+      user: { id: row.owner_id, email: row.email, role: row.role },
+    });
+  });
+
+  app.get('/api/auth/verify', async (req, res) => {
+    const { verifyEmailToken } = await import('../db/userRepository.js');
+    const ownerId = await verifyEmailToken(String(req.query.token ?? ''));
+    if (!ownerId) {
+      return res
+        .status(400)
+        .json({ error: 'invalid_token', message: 'That verification link is invalid or expired.' });
+    }
+    return res.json({ verified: true });
   });
 
   app.post('/api/auth/logout', (req, res) => {
@@ -199,14 +306,29 @@ export function setupAuthRoutes(app, { loginLimiter } = {}) {
     return res.json({ authenticated: false });
   });
 
-  app.get('/api/auth/me', attachSession, (req, res) => {
+  app.get('/api/auth/me', attachSession, async (req, res) => {
     if (!req.session) {
       return res.status(401).json({ authenticated: false, authRequired: true });
     }
+    if (req.session.authDisabled) {
+      return res.json({
+        authenticated: true,
+        user: { id: req.session.sub, role: 'admin' },
+        authDisabled: true,
+      });
+    }
+    const { findUserByOwnerId } = await import('../db/userRepository.js');
+    const user = await findUserByOwnerId(req.session.sub);
     return res.json({
       authenticated: true,
-      user: { id: req.session.sub },
-      authDisabled: Boolean(req.session.authDisabled),
+      user: user
+        ? {
+            id: user.ownerId,
+            email: user.email,
+            role: user.role,
+            emailVerified: user.emailVerified,
+          }
+        : { id: req.session.sub, role: req.session.role },
     });
   });
 }

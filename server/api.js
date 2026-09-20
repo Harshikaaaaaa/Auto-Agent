@@ -26,8 +26,16 @@ import {
   buildRequestLogger,
   errorHandler,
 } from './middleware/security.js';
-import { requireSession, setupAuthRoutes } from './auth/session.js';
-import { AI_PATHS, CONNECTOR_PATHS, FETCH_PATHS, WORKFLOW_PATHS } from './config/protectedPaths.js';
+import { requireAdmin, requireSession, setupAuthRoutes } from './auth/session.js';
+import { bootstrapAdminIfNeeded } from './db/bootstrapAdmin.js';
+import {
+  ADMIN_PATHS,
+  AI_PATHS,
+  BILLING_PATHS,
+  CONNECTOR_PATHS,
+  FETCH_PATHS,
+  WORKFLOW_PATHS,
+} from './config/protectedPaths.js';
 
 const app = express();
 const PORT = env.PORT;
@@ -84,6 +92,11 @@ app.use(FETCH_PATHS, limiters.fetch, requireSession);
 // proxy spends it. Anonymous access here would let a stranger send mail from the
 // operator's account, so the callback that WRITES the credential is gated too.
 app.use(CONNECTOR_PATHS, limiters.google, requireSession);
+// Billing endpoints are session-gated; the admin console is additionally
+// role-gated. The Razorpay webhook is registered elsewhere BEFORE these guards
+// (it is public-but-signature-verified), so it is not shadowed by requireSession.
+app.use(BILLING_PATHS, limiters.general, requireSession);
+app.use(ADMIN_PATHS, limiters.general, requireSession, requireAdmin);
 
 // AI backend-for-frontend. Provider credentials live only on this side.
 setupAiRoutes(app);
@@ -154,6 +167,11 @@ async function prepareDatabase() {
   await ensureDatabaseExists();
   const applied = await runMigrations();
   logger.info({ ...describeConnection(), migrationsApplied: applied }, 'database ready');
+
+  // Move single-operator -> multi-user without losing data: bind the first
+  // admin account to owner_id='operator' so its existing workflows/credentials
+  // are inherited. No-op once any user exists, or when not configured.
+  await bootstrapAdminIfNeeded();
 
   // One-time move off the legacy JSON file. Uses INSERT IGNORE, so this is a
   // no-op once the rows exist, and the source file is left in place.

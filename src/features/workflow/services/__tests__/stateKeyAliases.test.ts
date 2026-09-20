@@ -50,3 +50,15 @@ describe('aliasesOf', () => {
     expect(bodyGroup).not.toContain('subject');
   });
 });
+
+describe('formatted list outputs resolve as body text', () => {
+  it('connects a formatter output to a downstream reader of body text', () => {
+    // The reported flow: "Format Email List" writes `formatted_emails`, and the
+    // added download/email step reads `content`/`text`. They are one logical
+    // value, so a consumer now receives the formatted list without a per-node
+    // change.
+    expect(resolveWithAliases({ formatted_emails: 'LIST' }, 'content')).toBe('LIST');
+    expect(resolveWithAliases({ formatted_emails: 'LIST' }, 'text')).toBe('LIST');
+    expect(resolveWithAliases({ formatted_text: 'LIST' }, 'body')).toBe('LIST');
+  });
+});

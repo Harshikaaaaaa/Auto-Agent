@@ -28,8 +28,23 @@
  */
 export const STATE_KEY_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   // The body of text a step passes downstream: a scrape's readable text, an
-  // AI step's summary/result, generic content.
-  ['extracted_text', 'summary', 'result', 'text', 'content', 'markdown', 'body', 'raw_content'],
+  // AI step's summary/result, generic content, or a formatted list a step
+  // renders for the next one (e.g. an email digest → a download/email step).
+  [
+    'extracted_text',
+    'summary',
+    'result',
+    'text',
+    'content',
+    'markdown',
+    'body',
+    'raw_content',
+    'formatted_emails',
+    'formatted_text',
+    'formatted_content',
+    'formatted_list',
+    'output_text',
+  ],
   // The URL to act on.
   ['source_url', 'url', 'page_url', 'final_url', 'link'],
   // A recipient address / phone.

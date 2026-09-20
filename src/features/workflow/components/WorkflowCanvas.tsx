@@ -35,6 +35,7 @@ import {
   History,
   ArrowUp,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import {
   generateWorkflowPlan,
@@ -102,6 +103,7 @@ import {
 import { useUndoRedo } from '@features/workflow/hooks/useUndoRedo';
 import { useWorkflowVersions } from '@features/workflow/hooks/useWorkflowVersions';
 import { suggestFixes, type FixSuggestion } from '@features/workflow/services/failureFixes';
+import { refreshNodeContracts } from '@features/workflow/services/refreshNodes';
 import {
   currentNodeVersionIndex,
   listNodeVersions,
@@ -1952,6 +1954,34 @@ export function WorkflowCanvas() {
     clearLogs();
   };
 
+  /**
+   * Re-derive every tool node's state contract from the live registry, so a
+   * node built before a schema/alias fix picks up the corrected wiring without
+   * regenerating the flow. Reports the outcome in the chat so the user sees
+   * whether anything actually changed.
+   */
+  const handleRefreshNodes = () => {
+    const result = refreshNodeContracts(nodes as unknown as WorkflowNodeModel[]);
+    if (result.changed === 0) {
+      updateActiveTaskMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Refreshed the nodes — every step was already up to date.' },
+      ]);
+      return;
+    }
+    setNodes(result.nodes as unknown as Node[]);
+    updateActiveTaskMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        text:
+          `Refreshed ${result.changed} ${result.changed === 1 ? 'node' : 'nodes'} against the ` +
+          `latest tool definitions: ${result.changedLabels.join(', ')}. ` +
+          `Their inputs/outputs are re-wired to the current schema — try Run Flow again.`,
+      },
+    ]);
+  };
+
   return (
     <div className="flex h-screen w-full bg-[#050505] overflow-hidden text-white relative">
       {approvalRequest && (
@@ -2889,6 +2919,19 @@ export function WorkflowCanvas() {
                   </button>
                 </div>
               )}
+              {/* Secondary action, quiet by design: re-derive every tool
+                  node's state contract from the registry so a node built
+                  before a schema/alias fix picks up the corrected wiring. Sits
+                  beside Run Flow because it is the thing to try when a step
+                  fails "invalid_input" after a fix has shipped. */}
+              <button
+                onClick={handleRefreshNodes}
+                disabled={nodes.length === 0 || isExecuting}
+                className="ml-1 flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-white/55 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white disabled:opacity-25"
+                title="Re-wire every step to the latest tool definitions"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-accent" /> Refresh Nodes
+              </button>
               {/* Primary action: the only filled accent control in the bar. */}
               <button
                 onClick={handleExecuteFlow}

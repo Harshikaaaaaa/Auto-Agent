@@ -17,6 +17,7 @@ import { importLegacyWorkflows, runMigrations } from './db/migrations.js';
 import { OPERATOR_SUBJECT } from './auth/session.js';
 import { env, publicAiConfig } from './config/env.js';
 import { setupAiRoutes } from './ai/routes.js';
+import { setupBillingRoutes } from './billing/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
 import { logger } from './lib/logger.js';
 import {
@@ -100,6 +101,9 @@ app.use(ADMIN_PATHS, limiters.general, requireSession, requireAdmin);
 
 // AI backend-for-frontend. Provider credentials live only on this side.
 setupAiRoutes(app);
+
+// Billing reads (wallet, ledger, usage, analytics). Session-gated above.
+setupBillingRoutes(app);
 
 // Setup workflow routes
 setupWorkflowRoutes(app);

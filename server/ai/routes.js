@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import crypto from 'crypto';
 import { publicAiConfig } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import {
@@ -8,6 +9,13 @@ import {
   resolveProvider,
   defaultModelFor,
 } from './providers.js';
+import {
+  ModelAccessError,
+  reserveForRequest,
+  reconcile,
+  releaseForRequest,
+} from '../billing/billingService.js';
+import { InsufficientCreditsError } from '../db/walletRepository.js';
 import {
   buildConnectorPrompt,
   buildNodeExecutionPrompt,
@@ -233,6 +241,64 @@ async function observeAiCall(req, kind, args) {
 }
 
 /**
+ * RESERVE -> EXECUTE -> RECONCILE around a billable AI call.
+ *
+ * Resolves the provider + model up front (both known before the HTTP call, so
+ * the reserve can price against the right rate). If the model has no rate-card
+ * row, billing is not configured for it and the call proceeds UNBILLED — this
+ * keeps a fresh/dev setup working and never blocks on a missing rate. When a
+ * rate exists: check access + balance, hold the worst-case cost, call, then
+ * reconcile to the actual usage (releasing the remainder), or release the whole
+ * hold if the call failed before producing billable usage.
+ *
+ * Billing is skipped entirely when there is no real owner (auth disabled /
+ * dev session), so local development is unaffected.
+ */
+async function billedAiCall(req, kind, args) {
+  const ownerId = req.session?.sub;
+  const billable = ownerId && !req.session?.authDisabled;
+
+  if (!billable) return observeAiCall(req, kind, args);
+
+  const provider = resolveProvider(args.provider);
+  const model = args.model || defaultModelFor(provider);
+  const requestId = `${req.id ?? crypto.randomUUID()}:${kind}`;
+
+  let rate;
+  try {
+    ({ rate } = await reserveForRequest({ ownerId, provider, model, requestId }));
+  } catch (err) {
+    if (err instanceof ModelAccessError || err instanceof InsufficientCreditsError) throw err;
+    // No rate row (or a billing read failed): proceed UNBILLED rather than
+    // block a call the operator has not priced yet.
+    logger.warn({ err, provider, model }, 'billing reserve skipped; proceeding unbilled');
+    return observeAiCall(req, kind, args);
+  }
+
+  try {
+    const result = await observeAiCall(req, kind, args);
+    // Reconcile against the ACTUAL usage the provider reported.
+    const usage = result.usage ?? { provider, model, providerCostUsdMicros: 0 };
+    const { creditsCharged } = await reconcile({ ownerId, requestId, usage, rate });
+    // Surface the charge so the UI can show "used N credits".
+    result.creditsCharged = creditsCharged;
+    return result;
+  } catch (err) {
+    // The call failed before billable usage: free the hold, charge nothing.
+    await releaseForRequest({
+      ownerId,
+      requestId,
+      provider,
+      model,
+      errorCode: err?.code ?? (err instanceof ProviderError ? 'provider_error' : 'error'),
+    }).catch((releaseErr) =>
+      logger.warn({ err: releaseErr, requestId }, 'failed to release reservation'),
+    );
+    throw err;
+  }
+}
+
+/**
  * Wrap an async route so provider errors become clean HTTP responses and
  * unexpected errors never leak internals (a stack could contain a key).
  */
@@ -241,6 +307,12 @@ function handle(fn) {
     try {
       await fn(req, res);
     } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return res.status(402).json({ error: 'insufficient_credits', message: err.message });
+      }
+      if (err instanceof ModelAccessError) {
+        return res.status(403).json({ error: 'model_not_allowed', message: err.message });
+      }
       if (err instanceof ProviderError) {
         return res.status(err.status).json({
           error: 'provider_error',
@@ -282,7 +354,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { prompt, catalog, hints, provider, model, repairFeedback } = parsed.data;
-      const result = await observeAiCall(req, 'plan', {
+      const result = await billedAiCall(req, 'plan', {
         prompt: buildPlanPrompt({ prompt, catalog, hints, repairFeedback }),
         provider,
         model,
@@ -290,7 +362,12 @@ export function setupAiRoutes(app) {
 
       res.json({
         plan: result.json,
-        meta: { provider: result.provider, model: result.model, attempts: result.attempts },
+        meta: {
+          provider: result.provider,
+          model: result.model,
+          attempts: result.attempts,
+          creditsCharged: result.creditsCharged,
+        },
       });
     }),
   );
@@ -302,7 +379,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { message, graph, catalog, provider, model, repairFeedback } = parsed.data;
-      const result = await observeAiCall(req, 'patch', {
+      const result = await billedAiCall(req, 'patch', {
         prompt: buildPatchPrompt({ message, graph, catalog, repairFeedback }),
         provider,
         model,
@@ -310,7 +387,12 @@ export function setupAiRoutes(app) {
 
       res.json({
         patch: result.json,
-        meta: { provider: result.provider, model: result.model, attempts: result.attempts },
+        meta: {
+          provider: result.provider,
+          model: result.model,
+          attempts: result.attempts,
+          creditsCharged: result.creditsCharged,
+        },
       });
     }),
   );
@@ -323,7 +405,7 @@ export function setupAiRoutes(app) {
 
       const { nodeLabel, nodeDescription, inputState, outputKeys, context, provider, model } =
         parsed.data;
-      const result = await observeAiCall(req, 'node', {
+      const result = await billedAiCall(req, 'node', {
         prompt: buildNodeExecutionPrompt({
           nodeLabel,
           nodeDescription,
@@ -337,7 +419,12 @@ export function setupAiRoutes(app) {
 
       res.json({
         output: result.json,
-        meta: { provider: result.provider, model: result.model, attempts: result.attempts },
+        meta: {
+          provider: result.provider,
+          model: result.model,
+          attempts: result.attempts,
+          creditsCharged: result.creditsCharged,
+        },
       });
     }),
   );
@@ -349,7 +436,7 @@ export function setupAiRoutes(app) {
       if (!parsed.success) return validationFailure(res, parsed.error);
 
       const { toolName, toolDescription, requiredActions, provider, model } = parsed.data;
-      const result = await observeAiCall(req, 'connector', {
+      const result = await billedAiCall(req, 'connector', {
         prompt: buildConnectorPrompt({ toolName, toolDescription, requiredActions }),
         provider,
         model,
@@ -357,7 +444,12 @@ export function setupAiRoutes(app) {
 
       res.json({
         connector: result.json,
-        meta: { provider: result.provider, model: result.model, attempts: result.attempts },
+        meta: {
+          provider: result.provider,
+          model: result.model,
+          attempts: result.attempts,
+          creditsCharged: result.creditsCharged,
+        },
       });
     }),
   );

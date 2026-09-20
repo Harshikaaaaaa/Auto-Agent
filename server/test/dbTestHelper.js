@@ -70,11 +70,29 @@ export async function loadDbModules(vi, overrides = {}) {
   const runs = await import('../db/runRepository.js');
   const users = await import('../db/userRepository.js');
   const signupGrant = await import('../billing/signupGrant.js');
+  const wallet = await import('../db/walletRepository.js');
+  const reservations = await import('../db/reservationRepository.js');
+  const rateCard = await import('../db/rateCardRepository.js');
+  const aiUsage = await import('../db/aiUsageRepository.js');
+  const subscriptions = await import('../db/subscriptionRepository.js');
 
   await pool.ensureDatabaseExists();
   await migrations.runMigrations();
 
-  return { pool, migrations, repository, credentials, runs, users, signupGrant };
+  return {
+    pool,
+    migrations,
+    repository,
+    credentials,
+    runs,
+    users,
+    signupGrant,
+    wallet,
+    reservations,
+    rateCard,
+    aiUsage,
+    subscriptions,
+  };
 }
 
 /**

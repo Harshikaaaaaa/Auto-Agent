@@ -58,6 +58,12 @@ services:
     environment:
       # Override the host bits that must point at the compose network / container,
       # regardless of what .env says for a local (non-Docker) run.
+      #
+      # Always production: this keeps every production guard on AND keeps the
+      # client build in production mode (dev mode bakes absolute source paths
+      # into the bundle and trips the secret scanner). A localhost OAuth loop
+      # does NOT need dev mode — set OAUTH_ALLOW_INSECURE_REDIRECT=true in .env
+      # to permit the loopback http redirect instead.
       NODE_ENV: production
       PORT: '3234'
       DB_HOST: db

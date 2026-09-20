@@ -146,7 +146,10 @@ describe('a valid call', () => {
 describe('upstream failures are classified', () => {
   const cases = [
     [401, 'google_auth_failed', 401],
-    [403, 'google_auth_failed', 401],
+    // 403 is distinct from 401: the token was accepted but the request was
+    // forbidden (typically the API is not enabled on the project), so it must
+    // NOT be reported as an auth failure that a reconnect could fix.
+    [403, 'google_forbidden', 403],
     [429, 'google_rate_limited', 429],
     [404, 'google_not_found', 404],
     [500, 'google_unavailable', 502],

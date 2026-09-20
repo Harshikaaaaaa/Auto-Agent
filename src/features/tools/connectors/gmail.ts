@@ -38,7 +38,7 @@ class GmailApiError extends Error {
     message: string,
     public readonly statusCode: number,
     public readonly errorType:
-      'auth' | 'rate_limit' | 'invalid_recipient' | 'too_large' | 'generic',
+      'auth' | 'rate_limit' | 'invalid_recipient' | 'too_large' | 'forbidden' | 'generic',
   ) {
     super(message);
     this.name = 'GmailApiError';
@@ -71,6 +71,11 @@ function classifyProxyError(err: unknown): GmailApiError {
     case 'google_rejected':
     case 'invalid_params':
       return new GmailApiError(err.message, 400, 'invalid_recipient');
+    case 'google_forbidden':
+      // Token is fine; the request itself is forbidden (usually the Gmail API
+      // is not enabled on the project). Carry it as its own type so the engine
+      // does not tell the user to reconnect — that cannot fix a 403.
+      return new GmailApiError(err.message, 403, 'forbidden');
     default:
       return new GmailApiError(err.message, err.status, 'generic');
   }
@@ -368,6 +373,17 @@ const sendEmailAction: ToolActionDefinition = {
               sent_at: '',
               email_status: 'Email exceeds Gmail 25 MB limit. Consider using a Google Drive link.',
               error: 'Email exceeds Gmail 25 MB limit. Consider using a Google Drive link.',
+            };
+          case 'forbidden':
+            // A 403, not a 401: the token is valid but Gmail refused the call,
+            // almost always because the Gmail API is not enabled on the Google
+            // Cloud project. Reconnecting cannot fix it, so say so plainly.
+            return {
+              email_sent_id: '',
+              sent_to: to,
+              sent_at: '',
+              email_status: err.message,
+              error: err.message,
             };
         }
       }

@@ -21,11 +21,30 @@ const requestSchema = z.object({
 
 /** Upstream failure carrying the classification the client's error mapper wants. */
 function upstreamFailure(status, body) {
-  if (status === 401 || status === 403) {
+  const detail = typeof body === 'string' ? body.slice(0, 300) : '';
+
+  // 401 means the token is bad or expired: reconnecting genuinely helps.
+  if (status === 401) {
     return {
       status: 401,
       error: 'google_auth_failed',
       message: 'Google rejected the stored authorization. Reconnect the tool.',
+    };
+  }
+  // 403 is NOT an auth problem — the token was accepted, the request was
+  // forbidden. The usual cause is the API not being enabled on the Google
+  // Cloud project, or the account lacking access; reconnecting the tool does
+  // nothing for either. Surface Google's own reason (its 4xx body describes
+  // the caller's mistake and carries no credentials) instead of sending the
+  // user into a reconnect loop that cannot fix it.
+  if (status === 403) {
+    return {
+      status: 403,
+      error: 'google_forbidden',
+      message:
+        'Google accepted the sign-in but forbade the request (HTTP 403). This is usually the ' +
+        'Gmail/Sheets/Drive API not being enabled on your Google Cloud project, not a bad ' +
+        `connection — reconnecting will not help.${detail ? ` Google said: ${detail}` : ''}`,
     };
   }
   if (status === 429) {
@@ -52,7 +71,6 @@ function upstreamFailure(status, body) {
   if (status >= 400 && status < 500) {
     // Google's 4xx messages describe the caller's mistake and contain no
     // credentials, so the first part is useful to surface.
-    const detail = typeof body === 'string' ? body.slice(0, 300) : '';
     return {
       status: 400,
       error: 'google_rejected',
@@ -155,6 +173,11 @@ export function setupGoogleRoutes(app, { fetchImpl = fetch } = {}) {
           status: response.status,
           durationMs: Date.now() - startedAt,
           outcome: 'upstream_error',
+          // Google's 4xx body is a caller-error description (e.g. "Gmail API
+          // has not been used in project N before or it is disabled") and
+          // holds no token material, so it is safe and necessary to log for
+          // diagnosis. Bounded so a large body cannot flood the log.
+          googleDetail: response.status < 500 ? bodyText.slice(0, 300) : undefined,
         },
         'google api returned an error',
       );

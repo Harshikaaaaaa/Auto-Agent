@@ -193,7 +193,7 @@ describe('login', () => {
     expect(status).toBe(400);
   });
 
-  it('issues an httpOnly, SameSite=Strict cookie on success', async () => {
+  it('issues an httpOnly, SameSite=Lax cookie on success', async () => {
     const res = await realFetch(`${baseUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -204,8 +204,12 @@ describe('login', () => {
     expect(res.status).toBe(200);
     // httpOnly is what stops an XSS from reading the session.
     expect(setCookie).toMatch(/HttpOnly/i);
-    // SameSite=Strict is what stops cross-site POST CSRF.
-    expect(setCookie).toMatch(/SameSite=Strict/i);
+    // SameSite=Lax, not Strict: it still withholds the cookie on cross-site
+    // POST (so CSRF on the mutating endpoints stays closed), while allowing the
+    // top-level GET navigation back from Google's OAuth consent screen to the
+    // session-gated callback. See cookieOptions() in server/auth/session.js.
+    expect(setCookie).toMatch(/SameSite=Lax/i);
+    expect(setCookie).not.toMatch(/SameSite=Strict/i);
     expect(setCookie).toMatch(/Path=\//i);
   });
 

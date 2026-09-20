@@ -104,7 +104,17 @@ function cookieOptions() {
   return {
     httpOnly: true,
     secure: env.SESSION_COOKIE_SECURE,
-    sameSite: 'strict',
+    // 'lax', not 'strict': the Google OAuth callback is a top-level cross-site
+    // GET navigation (accounts.google.com -> /api/oauth/google/callback), and
+    // that route is session-gated because it writes the credential. Under
+    // 'strict' the browser withholds the session cookie on that navigation, so
+    // the callback always failed with 'unauthenticated' and no tool could ever
+    // connect. 'lax' still withholds the cookie on cross-site POST — every
+    // mutating endpoint (/api/ai, /api/google/call, /api/workflows) is a POST,
+    // so CSRF on those stays closed. The one state-changing GET, the callback,
+    // has its own CSRF defence: the OAuth `state` echo plus PKCE, both checked
+    // before anything is written.
+    sameSite: 'lax',
     path: '/',
     maxAge: env.SESSION_TTL_HOURS * 3600 * 1000,
   };

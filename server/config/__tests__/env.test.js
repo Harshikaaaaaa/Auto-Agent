@@ -124,6 +124,48 @@ describe('server env validation', () => {
       expect(env.GOOGLE_OAUTH_REDIRECT_URI).toBeUndefined();
     });
 
+    // Base config that satisfies the OTHER production guards (DB password, DB
+    // TLS trust), so these tests isolate the OAuth-redirect rule alone.
+    const PROD_BASE = {
+      AI_PROVIDER: 'ollama',
+      NODE_ENV: 'production',
+      SESSION_COOKIE_SECURE: 'true',
+      DB_PASSWORD: 'prod-db-password',
+      DB_TRUST_PRIVATE_NETWORK: 'true',
+      CREDENTIAL_SECRET: 'c'.repeat(64),
+      GOOGLE_CLIENT_ID: 'id.apps.googleusercontent.com',
+      GOOGLE_CLIENT_SECRET: 'secret',
+    };
+
+    it('rejects a plain-http OAuth redirect in production by default', async () => {
+      await expect(
+        loadEnv({
+          ...PROD_BASE,
+          GOOGLE_OAUTH_REDIRECT_URI: 'http://localhost:3234/api/oauth/google/callback',
+        }),
+      ).rejects.toThrow(/Invalid server configuration/);
+    });
+
+    it('allows a loopback http redirect in production when explicitly opted in', async () => {
+      const { env } = await loadEnv({
+        ...PROD_BASE,
+        OAUTH_ALLOW_INSECURE_REDIRECT: 'true',
+        GOOGLE_OAUTH_REDIRECT_URI: 'http://localhost:3234/api/oauth/google/callback',
+      });
+      expect(env.GOOGLE_OAUTH_REDIRECT_URI).toBe('http://localhost:3234/api/oauth/google/callback');
+    });
+
+    it('does not let the opt-in flag excuse a non-loopback http redirect', async () => {
+      // The escape hatch is only for traffic that never leaves the machine.
+      await expect(
+        loadEnv({
+          ...PROD_BASE,
+          OAUTH_ALLOW_INSECURE_REDIRECT: 'true',
+          GOOGLE_OAUTH_REDIRECT_URI: 'http://example.com/api/oauth/google/callback',
+        }),
+      ).rejects.toThrow(/Invalid server configuration/);
+    });
+
     it('does not require TLS for a local DB in production', async () => {
       const { env } = await loadEnv({
         NODE_ENV: 'production',

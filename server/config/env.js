@@ -227,6 +227,17 @@ const schema = z
     GOOGLE_CLIENT_SECRET: optionalSecret(),
     /** Must match a redirect URI registered on the Google OAuth client exactly. */
     GOOGLE_OAUTH_REDIRECT_URI: optionalUrl(),
+    /**
+     * Opt out of the "OAuth redirect must be https in production" guard for a
+     * local loopback callback (http://localhost/...). The authorization code
+     * rides in the redirect URL's query string, so plain HTTP would expose it
+     * across a network — but a loopback redirect never leaves the machine.
+     * This exists so the app can run its full production configuration locally
+     * (which the client build depends on) while still completing the Google
+     * consent flow. Never set it in a deployed environment. Mirrors
+     * DB_TRUST_PRIVATE_NETWORK.
+     */
+    OAUTH_ALLOW_INSECURE_REDIRECT: booleanish(false),
     /** Longest a single proxied Google API call may take. */
     GOOGLE_API_TIMEOUT_MS: intWithDefault(30_000, { min: 1_000, max: 120_000 }),
     /** Budget for proxied Google calls, per IP per window. */
@@ -377,19 +388,35 @@ const schema = z
       }
     }
 
-    // An OAuth redirect over plain HTTP would expose the authorization code.
+    // An OAuth redirect over plain HTTP would expose the authorization code,
+    // which rides in that URL's query string. Enforced in production — but a
+    // loopback redirect (http://localhost or 127.0.0.1) never leaves the
+    // machine, so it is allowed when OAUTH_ALLOW_INSECURE_REDIRECT is set,
+    // exactly the way DB_TRUST_PRIVATE_NETWORK relaxes the DB-TLS guard.
     if (
       cfg.NODE_ENV === 'production' &&
       cfg.GOOGLE_OAUTH_REDIRECT_URI &&
       !cfg.GOOGLE_OAUTH_REDIRECT_URI.startsWith('https://')
     ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['GOOGLE_OAUTH_REDIRECT_URI'],
-        message:
-          'GOOGLE_OAUTH_REDIRECT_URI must use https in production: the authorization code ' +
-          'arrives in the query string of this URL.',
-      });
+      const isLoopback = (() => {
+        try {
+          const host = new URL(cfg.GOOGLE_OAUTH_REDIRECT_URI).hostname;
+          return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+        } catch {
+          return false;
+        }
+      })();
+      const allowedLocal = isLoopback && cfg.OAUTH_ALLOW_INSECURE_REDIRECT;
+      if (!allowedLocal) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['GOOGLE_OAUTH_REDIRECT_URI'],
+          message:
+            'GOOGLE_OAUTH_REDIRECT_URI must use https in production: the authorization code ' +
+            'arrives in the query string of this URL. For a local loopback callback ' +
+            '(http://localhost/...), set OAUTH_ALLOW_INSECURE_REDIRECT=true to allow it.',
+        });
+      }
     }
   })
   .transform((cfg) => ({

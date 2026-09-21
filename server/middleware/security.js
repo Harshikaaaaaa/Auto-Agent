@@ -85,7 +85,12 @@ export function buildHelmet() {
         // moved the whole flow to the server, so the page loads no third-party
         // script and makes no cross-origin request to Google. Consent happens in
         // a top-level popup, which CSP does not govern.
-        scriptSrc: ["'self'"],
+        // Razorpay Checkout loads its script from checkout.razorpay.com and
+        // renders the card/UPI form in an iframe from api/checkout.razorpay.com,
+        // talking back to *.razorpay.com. These are the ONLY third-party origins
+        // the app allows, and only the payment flow uses them. Everything else
+        // is still same-origin.
+        scriptSrc: ["'self'", 'https://checkout.razorpay.com'],
         // No CDN style or font origins any more. Task 15 moved Tailwind into a
         // PostCSS build, self-hosted the fonts via bundled @fontsource packages,
         // and imported react-flow's CSS through Vite, so every stylesheet and
@@ -99,8 +104,8 @@ export function buildHelmet() {
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-        connectSrc: ["'self'"],
-        frameSrc: ["'self'"],
+        connectSrc: ["'self'", 'https://api.razorpay.com', 'https://lumberjack.razorpay.com'],
+        frameSrc: ["'self'", 'https://api.razorpay.com', 'https://checkout.razorpay.com'],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

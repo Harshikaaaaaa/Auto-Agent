@@ -334,10 +334,14 @@ describe('security headers', () => {
     expect(csp).not.toContain('jsdelivr.net');
   });
 
-  it('allows no third-party script origin', async () => {
+  it('allows only self + Razorpay Checkout as script origins', async () => {
     const { headers } = await req('/healthz');
     const csp = headers.get('content-security-policy');
-    expect(csp).toContain("script-src 'self'");
+    // Same-origin plus the single third party the payment flow needs.
+    expect(csp).toContain("script-src 'self' https://checkout.razorpay.com");
+    // No other third-party script origin sneaks in.
+    expect(csp).not.toContain('jsdelivr.net');
+    expect(csp).not.toContain('googleapis.com');
   });
 
   it('does not advertise the server implementation', async () => {

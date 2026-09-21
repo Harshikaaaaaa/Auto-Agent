@@ -34,6 +34,7 @@ import {
   PrimaryButton,
   SectionLabel,
 } from './components/ui';
+import { CheckoutUnavailableError, openRazorpayCheckout } from './razorpayCheckout';
 
 /**
  * The billing area. A self-contained routed sub-app mounted at /billing/*, so
@@ -232,11 +233,17 @@ function PlansPage() {
     setNotice(null);
     try {
       const order = await createSubscribeOrder(plan.id);
-      setNotice(
-        `Order ${order.orderId} created for ${formatRupees(order.amountPaise)}. Complete payment in the checkout to activate ${plan.displayName}.`,
-      );
+      await openRazorpayCheckout(order, {
+        description: `${plan.displayName} subscription`,
+        onSuccess: () =>
+          setNotice(
+            `Payment received for ${plan.displayName}. Your plan activates once the payment is confirmed (usually within a few seconds).`,
+          ),
+        onDismiss: () => setNotice('Checkout closed. Your plan was not changed.'),
+      });
     } catch (e) {
-      setNotice(e instanceof BillingError ? e.message : 'Could not start checkout.');
+      if (e instanceof CheckoutUnavailableError) setNotice(e.message);
+      else setNotice(e instanceof BillingError ? e.message : 'Could not start checkout.');
     } finally {
       setBusy(null);
     }
@@ -301,11 +308,17 @@ function AddCreditsPage() {
     setNotice(null);
     try {
       const order = await createTopupOrder(pkg.id);
-      setNotice(
-        `Order ${order.orderId} created for ${formatRupees(order.amountPaise)}. Complete payment to receive ${formatCredits(pkg.credits + pkg.bonusCredits)} credits.`,
-      );
+      await openRazorpayCheckout(order, {
+        description: `${formatCredits(pkg.credits + pkg.bonusCredits)} credits`,
+        onSuccess: () =>
+          setNotice(
+            `Payment received. ${formatCredits(pkg.credits + pkg.bonusCredits)} credits will be added once the payment is confirmed (usually within a few seconds).`,
+          ),
+        onDismiss: () => setNotice('Checkout closed. No credits were purchased.'),
+      });
     } catch (e) {
-      setNotice(e instanceof BillingError ? e.message : 'Could not start checkout.');
+      if (e instanceof CheckoutUnavailableError) setNotice(e.message);
+      else setNotice(e instanceof BillingError ? e.message : 'Could not start checkout.');
     } finally {
       setBusy(null);
     }

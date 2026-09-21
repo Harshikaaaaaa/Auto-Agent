@@ -19,6 +19,7 @@ import { env, publicAiConfig } from './config/env.js';
 import { setupAiRoutes } from './ai/routes.js';
 import { setupBillingRoutes } from './billing/routes.js';
 import { setupPaymentRoutes, setupPaymentWebhook } from './payments/routes.js';
+import { setupAdminRoutes } from './admin/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
 import { logger } from './lib/logger.js';
 import {
@@ -119,6 +120,10 @@ setupAiRoutes(app);
 // creation, subscription management, history). Session-gated above.
 setupBillingRoutes(app);
 setupPaymentRoutes(app);
+
+// Admin billing console API (cross-user reads + audited credit adjustment).
+// The /api/admin prefix is gated by requireSession + requireAdmin above.
+setupAdminRoutes(app);
 
 // Setup workflow routes
 setupWorkflowRoutes(app);

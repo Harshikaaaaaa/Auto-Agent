@@ -1,15 +1,25 @@
--- AutoAgent database export
+-- AutoAgent database export (schema + DEMO data)
 --
--- Schema for all tables + seed/reference data (subscription plans, credit
--- packages, the AI rate card, and the applied-migrations bookkeeping).
--- Contains NO user, payment, credential, wallet, or settings data.
+-- Full schema for all tables, plus demo/seed data:
+--   * reference data: subscription plans, credit packages, AI rate card, migrations
+--   * demo accounts + their wallets, subscriptions, and credit transactions
 --
--- Load into a fresh MySQL to bootstrap the app:
+-- Demo logins (LOCAL DEMO ONLY — change before any real deployment):
+--   admin@autoagent.test / AdminPass123   (role: admin)
+--   user@autoagent.test  / UserPass123    (role: user)
+-- Passwords are stored as one-way scrypt hashes.
+--
+-- EXCLUDED for safety: app_settings and tool_credentials ship as EMPTY tables.
+-- They hold AES-256-GCM-encrypted API keys / OAuth tokens; even though the
+-- ciphertext is useless without CREDENTIAL_SECRET (which is never in this file),
+-- no third-party keys are shipped. Set provider/Razorpay keys via .env or the
+-- Admin -> Settings page after loading.
+--
+-- Load into a fresh MySQL:
 --   mysql -u root -p < AutoAgent.sql
 --
--- The app also creates this exact schema automatically on boot when
--- DB_AUTO_MIGRATE=true (see server/db/migrations.js); this file is provided
--- for a manual/seed setup or inspection.
+-- NOTE: this file DROPs and recreates each table, so loading it REPLACES any
+-- existing data in the `autoagent` database.
 
 CREATE DATABASE IF NOT EXISTS `autoagent` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */;
 USE `autoagent`;
@@ -53,6 +63,12 @@ CREATE TABLE `ai_model_rates` (
   UNIQUE KEY `uq_rates_provider_model` (`provider`,`model_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `ai_model_rates` WRITE;
+/*!40000 ALTER TABLE `ai_model_rates` DISABLE KEYS */;
+INSERT INTO `ai_model_rates` (`id`, `provider`, `model_id`, `display_name`, `input_price_per_1m_micros`, `cached_input_price_per_1m_micros`, `output_price_per_1m_micros`, `reasoning_price_per_1m_micros`, `provider_fee_bps`, `markup_multiplier_x10`, `billing_exchange_rate_paise_usd`, `minimum_credit_charge`, `maximum_output_tokens`, `enabled`, `free_plan_allowed`, `starter_plan_allowed`, `pro_plan_allowed`, `business_plan_allowed`, `created_at`, `updated_at`) VALUES ('2e692a07-b556-11f1-9741-4ee37b987cb8','openrouter','openai/gpt-oss-120b','GPT OSS 120B',100000,0,300000,0,550,25,10000,1,8192,1,0,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692b11-b556-11f1-9741-4ee37b987cb8','gemini','gemini-3.5-flash','Gemini 3.5 Flash',75000,0,300000,0,0,25,10000,1,8192,1,1,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692bca-b556-11f1-9741-4ee37b987cb8','openai','gpt-4o-mini','GPT-4o mini',150000,75000,600000,0,0,25,10000,1,8192,1,0,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692c27-b556-11f1-9741-4ee37b987cb8','ollama','deepseek-r1:8b','DeepSeek R1 8B (local)',0,0,0,0,0,25,10000,0,8192,1,1,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565');
+/*!40000 ALTER TABLE `ai_model_rates` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `ai_usage`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -81,18 +97,11 @@ CREATE TABLE `ai_usage` (
   CONSTRAINT `fk_ai_usage_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `app_settings`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `app_settings` (
-  `setting_key` varchar(64) NOT NULL,
-  `value_enc` text NOT NULL,
-  `updated_by` varchar(64) DEFAULT NULL,
-  `created_at` datetime(3) NOT NULL,
-  `updated_at` datetime(3) NOT NULL,
-  PRIMARY KEY (`setting_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `ai_usage` WRITE;
+/*!40000 ALTER TABLE `ai_usage` DISABLE KEYS */;
+/*!40000 ALTER TABLE `ai_usage` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `coupon_redemptions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -109,6 +118,11 @@ CREATE TABLE `coupon_redemptions` (
   CONSTRAINT `fk_redemptions_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `coupon_redemptions` WRITE;
+/*!40000 ALTER TABLE `coupon_redemptions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `coupon_redemptions` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `coupons`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -135,6 +149,11 @@ CREATE TABLE `coupons` (
   UNIQUE KEY `uq_coupons_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `coupons` WRITE;
+/*!40000 ALTER TABLE `coupons` DISABLE KEYS */;
+/*!40000 ALTER TABLE `coupons` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `credit_packages`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -154,6 +173,12 @@ CREATE TABLE `credit_packages` (
   UNIQUE KEY `uq_packages_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `credit_packages` WRITE;
+/*!40000 ALTER TABLE `credit_packages` DISABLE KEYS */;
+INSERT INTO `credit_packages` (`id`, `code`, `display_name`, `price_paise`, `credits`, `bonus_credits`, `enabled`, `expires_days`, `sort_order`, `created_at`, `updated_at`) VALUES ('2e68fde4-b556-11f1-9741-4ee37b987cb8','pack_99','10,000 credits',9900,10000,0,1,NULL,0,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68fea4-b556-11f1-9741-4ee37b987cb8','pack_249','25,500 credits',24900,25000,500,1,NULL,1,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ff36-b556-11f1-9741-4ee37b987cb8','pack_499','52,500 credits',49900,50000,2500,1,NULL,2,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ff7a-b556-11f1-9741-4ee37b987cb8','pack_999','110,000 credits',99900,100000,10000,1,NULL,3,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ffb3-b556-11f1-9741-4ee37b987cb8','pack_2499','300,000 credits',249900,275000,25000,1,NULL,4,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564');
+/*!40000 ALTER TABLE `credit_packages` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `credit_reservations`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -173,6 +198,11 @@ CREATE TABLE `credit_reservations` (
   CONSTRAINT `fk_reservations_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `credit_reservations` WRITE;
+/*!40000 ALTER TABLE `credit_reservations` DISABLE KEYS */;
+/*!40000 ALTER TABLE `credit_reservations` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `credit_transactions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -206,6 +236,12 @@ CREATE TABLE `credit_transactions` (
   CONSTRAINT `fk_credit_tx_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `credit_transactions` WRITE;
+/*!40000 ALTER TABLE `credit_transactions` DISABLE KEYS */;
+INSERT INTO `credit_transactions` (`id`, `owner_id`, `transaction_type`, `credits`, `balance_before`, `balance_after`, `subscription_credits_change`, `purchased_credits_change`, `bonus_credits_change`, `provider`, `model`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_tokens`, `provider_cost_usd_micros`, `customer_cost_credits`, `ai_request_id`, `payment_id`, `subscription_id`, `description`, `metadata`, `created_at`) VALUES ('0add0b29-a481-46f4-816a-a09eb5e61443','71b4d372-150e-4d3f-b61b-34f0f2104f64','BONUS',1000,0,1000,0,0,1000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Signup credits',NULL,'2026-09-21 17:27:52.492'),('4755e1d2-cd4b-43ff-9e4e-089f119b62cc','05985d0f-893e-462c-b54c-44cd4dd34306','BONUS',1000,0,1000,0,0,1000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Signup credits',NULL,'2026-09-21 17:27:52.137'),('72b451d4-f704-41a4-9af4-8063c3429af3','05985d0f-893e-462c-b54c-44cd4dd34306','SUBSCRIPTION_RESET',90000,1000,91000,90000,0,0,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Plan set to Pro by admin 05985d0f-893e-462c-b54c-44cd4dd34306',NULL,'2026-09-21 17:28:13.658'),('ccafbc9e-f3c2-4a2b-aa73-0ed815fa1f5e','71b4d372-150e-4d3f-b61b-34f0f2104f64','SUBSCRIPTION_RESET',32000,1000,33000,32000,0,0,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Plan set to Starter by admin 05985d0f-893e-462c-b54c-44cd4dd34306',NULL,'2026-09-21 17:28:14.153'),('fd6362ee-0847-4a45-a40c-f3a177f24520','71b4d372-150e-4d3f-b61b-34f0f2104f64','ADMIN_ADJUSTMENT',5000,33000,38000,0,0,5000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Admin adjustment by 05985d0f-893e-462c-b54c-44cd4dd34306: demo goodwill credit','{\"at\": \"2026-09-21T17:28:14.178Z\", \"bucket\": \"bonus\", \"reason\": \"demo goodwill credit\", \"adminId\": \"05985d0f-893e-462c-b54c-44cd4dd34306\"}','2026-09-21 17:28:14.178');
+/*!40000 ALTER TABLE `credit_transactions` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `credit_wallets`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -222,6 +258,12 @@ CREATE TABLE `credit_wallets` (
   CONSTRAINT `fk_credit_wallets_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `credit_wallets` WRITE;
+/*!40000 ALTER TABLE `credit_wallets` DISABLE KEYS */;
+INSERT INTO `credit_wallets` (`owner_id`, `subscription_credits`, `bonus_credits`, `purchased_credits`, `used_this_month`, `lifetime_used`, `created_at`, `updated_at`) VALUES ('05985d0f-893e-462c-b54c-44cd4dd34306',90000,1000,0,0,0,'2026-09-21 17:27:52.137','2026-09-21 17:28:13.658'),('71b4d372-150e-4d3f-b61b-34f0f2104f64',32000,6000,0,0,0,'2026-09-21 17:27:52.492','2026-09-21 17:28:14.178');
+/*!40000 ALTER TABLE `credit_wallets` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `owners`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -231,6 +273,12 @@ CREATE TABLE `owners` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `owners` WRITE;
+/*!40000 ALTER TABLE `owners` DISABLE KEYS */;
+INSERT INTO `owners` (`id`, `created_at`) VALUES ('05985d0f-893e-462c-b54c-44cd4dd34306','2026-09-21 17:27:51.790'),('71b4d372-150e-4d3f-b61b-34f0f2104f64','2026-09-21 17:27:52.165');
+/*!40000 ALTER TABLE `owners` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `payments`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -259,6 +307,11 @@ CREATE TABLE `payments` (
   CONSTRAINT `fk_payments_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `payments` WRITE;
+/*!40000 ALTER TABLE `payments` DISABLE KEYS */;
+/*!40000 ALTER TABLE `payments` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `schema_migrations`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -268,6 +321,12 @@ CREATE TABLE `schema_migrations` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `schema_migrations` WRITE;
+/*!40000 ALTER TABLE `schema_migrations` DISABLE KEYS */;
+INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('001_create_owners','2026-09-18 05:18:45.327'),('002_create_workflows','2026-09-18 05:18:45.336'),('003_create_tool_credentials','2026-09-18 05:18:45.343'),('004_create_workflow_runs','2026-09-18 05:18:45.352'),('005_create_users','2026-09-21 00:48:37.479'),('006_create_billing','2026-09-21 00:48:37.560'),('007_seed_billing_defaults','2026-09-21 00:48:37.566'),('008_create_app_settings','2026-09-21 15:21:48.669');
+/*!40000 ALTER TABLE `schema_migrations` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `subscription_plans`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -289,6 +348,12 @@ CREATE TABLE `subscription_plans` (
   UNIQUE KEY `uq_plans_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `subscription_plans` WRITE;
+/*!40000 ALTER TABLE `subscription_plans` DISABLE KEYS */;
+INSERT INTO `subscription_plans` (`id`, `code`, `display_name`, `price_paise`, `billing_cycle`, `included_credits`, `features`, `model_access`, `request_limits`, `enabled`, `sort_order`, `created_at`, `updated_at`) VALUES ('2e68bb68-b556-11f1-9741-4ee37b987cb8','free','Free',0,'monthly',1000,'[\"Basic AI models\", \"Limited requests\", \"No API access\"]','{\"tier\": \"basic\"}','{\"perDay\": 50}',1,0,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68be3d-b556-11f1-9741-4ee37b987cb8','starter','Starter',29900,'monthly',32000,'[\"More AI models\", \"Standard request limits\", \"AI usage history\", \"Credit top-ups\"]','{\"tier\": \"standard\"}','{\"perDay\": 500}',1,1,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68bf1e-b556-11f1-9741-4ee37b987cb8','pro','Pro',79900,'monthly',90000,'[\"All supported AI models\", \"Higher request limits\", \"Priority processing\", \"API access\", \"Full usage analytics\"]','{\"tier\": \"all\"}','{\"perDay\": 5000}',1,2,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68bf9e-b556-11f1-9741-4ee37b987cb8','business','Business',199900,'monthly',240000,'[\"All models\", \"Highest limits\", \"API access\", \"Advanced usage analytics\", \"Priority processing\"]','{\"tier\": \"all\"}','{\"perDay\": 50000}',1,3,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562');
+/*!40000 ALTER TABLE `subscription_plans` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `subscriptions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -314,23 +379,12 @@ CREATE TABLE `subscriptions` (
   CONSTRAINT `fk_subscriptions_plan` FOREIGN KEY (`plan_id`) REFERENCES `subscription_plans` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `tool_credentials`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `tool_credentials` (
-  `owner_id` varchar(64) NOT NULL,
-  `tool_id` varchar(64) NOT NULL,
-  `provider` varchar(32) NOT NULL,
-  `access_token_enc` text NOT NULL,
-  `refresh_token_enc` text,
-  `expires_at` datetime(3) DEFAULT NULL,
-  `scopes` json NOT NULL,
-  `connected_at` datetime(3) NOT NULL,
-  `updated_at` datetime(3) NOT NULL,
-  PRIMARY KEY (`owner_id`,`tool_id`),
-  CONSTRAINT `fk_tool_credentials_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `subscriptions` WRITE;
+/*!40000 ALTER TABLE `subscriptions` DISABLE KEYS */;
+INSERT INTO `subscriptions` (`id`, `owner_id`, `plan_id`, `status`, `billing_cycle`, `price_paise`, `included_credits`, `gateway_subscription_id`, `current_period_start`, `current_period_end`, `next_billing_at`, `cancel_at_period_end`, `created_at`, `updated_at`) VALUES ('2792e7e7-f767-4e54-8447-b643efba70e5','05985d0f-893e-462c-b54c-44cd4dd34306','2e68bb68-b556-11f1-9741-4ee37b987cb8','cancelled','monthly',0,1000,NULL,'2026-09-21 17:27:52.137',NULL,NULL,0,'2026-09-21 17:27:52.137','2026-09-21 17:28:13.656'),('534c67ab-28f2-425c-ac84-f50b0afb2534','05985d0f-893e-462c-b54c-44cd4dd34306','2e68bf1e-b556-11f1-9741-4ee37b987cb8','active','monthly',79900,90000,NULL,'2026-09-21 17:28:13.656','2026-10-21 17:28:13.656','2026-10-21 17:28:13.656',0,'2026-09-21 17:28:13.656','2026-09-21 17:28:13.656'),('8a769026-24e1-41a6-9e3c-95e4b701fbd4','71b4d372-150e-4d3f-b61b-34f0f2104f64','2e68be3d-b556-11f1-9741-4ee37b987cb8','active','monthly',29900,32000,NULL,'2026-09-21 17:28:14.152','2026-10-21 17:28:14.152','2026-10-21 17:28:14.152',0,'2026-09-21 17:28:14.152','2026-09-21 17:28:14.152'),('cf0ad006-20ac-40df-baa7-90ec38cb7f0d','71b4d372-150e-4d3f-b61b-34f0f2104f64','2e68bb68-b556-11f1-9741-4ee37b987cb8','cancelled','monthly',0,1000,NULL,'2026-09-21 17:27:52.492',NULL,NULL,0,'2026-09-21 17:27:52.492','2026-09-21 17:28:14.152');
+/*!40000 ALTER TABLE `subscriptions` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -352,6 +406,12 @@ CREATE TABLE `users` (
   CONSTRAINT `fk_users_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `users` WRITE;
+/*!40000 ALTER TABLE `users` DISABLE KEYS */;
+INSERT INTO `users` (`id`, `owner_id`, `email`, `password_hash`, `role`, `status`, `email_verified`, `email_verification_token`, `created_at`, `updated_at`) VALUES ('05985d0f-893e-462c-b54c-44cd4dd34306','05985d0f-893e-462c-b54c-44cd4dd34306','admin@autoagent.test','scrypt$131072$8$1$5LK8O7TVkWiZ3F6TWOVdeA==$q2h2Juf4YNq/GQhk2uLZn74iotot/2J7Sc+99uTVHsQ=','admin','active',0,'21ILNwjDRhKJrHNo3Gkk3Bm1IbxbYyYQ','2026-09-21 17:27:51.790','2026-09-21 17:27:51.790'),('71b4d372-150e-4d3f-b61b-34f0f2104f64','71b4d372-150e-4d3f-b61b-34f0f2104f64','user@autoagent.test','scrypt$131072$8$1$F7d/GamXdPIpEtaUtnrqTA==$QvMDxIbuzAgGNGLAoHx9+0qC7fVj5jOgUsYHvsCe3eg=','user','active',0,'dENIgCziJwUN7GUG2ycSEd26F5-QHy0z','2026-09-21 17:27:52.165','2026-09-21 17:27:52.165');
+/*!40000 ALTER TABLE `users` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `workflow_runs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -377,6 +437,11 @@ CREATE TABLE `workflow_runs` (
   CONSTRAINT `fk_workflow_runs_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `workflow_runs` WRITE;
+/*!40000 ALTER TABLE `workflow_runs` DISABLE KEYS */;
+/*!40000 ALTER TABLE `workflow_runs` ENABLE KEYS */;
+UNLOCK TABLES;
 DROP TABLE IF EXISTS `workflows`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -397,6 +462,11 @@ CREATE TABLE `workflows` (
   CONSTRAINT `fk_workflows_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+LOCK TABLES `workflows` WRITE;
+/*!40000 ALTER TABLE `workflows` DISABLE KEYS */;
+/*!40000 ALTER TABLE `workflows` ENABLE KEYS */;
+UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -408,12 +478,7 @@ CREATE TABLE `workflows` (
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 
--- ============================================================
--- Seed / reference data (safe to ship): plans, packages, rates,
--- and the applied-migrations bookkeeping. No user, payment,
--- credential, or settings data is included.
--- ============================================================
-
+-- --- structure only for secret-bearing tables (no rows shipped) ---
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -425,30 +490,35 @@ CREATE TABLE `workflows` (
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
-
-LOCK TABLES `subscription_plans` WRITE;
-/*!40000 ALTER TABLE `subscription_plans` DISABLE KEYS */;
-INSERT INTO `subscription_plans` VALUES ('2e68bb68-b556-11f1-9741-4ee37b987cb8','free','Free',0,'monthly',1000,'[\"Basic AI models\", \"Limited requests\", \"No API access\"]','{\"tier\": \"basic\"}','{\"perDay\": 50}',1,0,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68be3d-b556-11f1-9741-4ee37b987cb8','starter','Starter',29900,'monthly',32000,'[\"More AI models\", \"Standard request limits\", \"AI usage history\", \"Credit top-ups\"]','{\"tier\": \"standard\"}','{\"perDay\": 500}',1,1,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68bf1e-b556-11f1-9741-4ee37b987cb8','pro','Pro',79900,'monthly',90000,'[\"All supported AI models\", \"Higher request limits\", \"Priority processing\", \"API access\", \"Full usage analytics\"]','{\"tier\": \"all\"}','{\"perDay\": 5000}',1,2,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562'),('2e68bf9e-b556-11f1-9741-4ee37b987cb8','business','Business',199900,'monthly',240000,'[\"All models\", \"Highest limits\", \"API access\", \"Advanced usage analytics\", \"Priority processing\"]','{\"tier\": \"all\"}','{\"perDay\": 50000}',1,3,'2026-09-21 00:48:37.562','2026-09-21 00:48:37.562');
-/*!40000 ALTER TABLE `subscription_plans` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `credit_packages` WRITE;
-/*!40000 ALTER TABLE `credit_packages` DISABLE KEYS */;
-INSERT INTO `credit_packages` VALUES ('2e68fde4-b556-11f1-9741-4ee37b987cb8','pack_99','10,000 credits',9900,10000,0,1,NULL,0,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68fea4-b556-11f1-9741-4ee37b987cb8','pack_249','25,500 credits',24900,25000,500,1,NULL,1,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ff36-b556-11f1-9741-4ee37b987cb8','pack_499','52,500 credits',49900,50000,2500,1,NULL,2,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ff7a-b556-11f1-9741-4ee37b987cb8','pack_999','110,000 credits',99900,100000,10000,1,NULL,3,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564'),('2e68ffb3-b556-11f1-9741-4ee37b987cb8','pack_2499','300,000 credits',249900,275000,25000,1,NULL,4,'2026-09-21 00:48:37.564','2026-09-21 00:48:37.564');
-/*!40000 ALTER TABLE `credit_packages` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `ai_model_rates` WRITE;
-/*!40000 ALTER TABLE `ai_model_rates` DISABLE KEYS */;
-INSERT INTO `ai_model_rates` VALUES ('2e692a07-b556-11f1-9741-4ee37b987cb8','openrouter','openai/gpt-oss-120b','GPT OSS 120B',100000,0,300000,0,550,25,10000,1,8192,1,0,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692b11-b556-11f1-9741-4ee37b987cb8','gemini','gemini-3.5-flash','Gemini 3.5 Flash',75000,0,300000,0,0,25,10000,1,8192,1,1,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692bca-b556-11f1-9741-4ee37b987cb8','openai','gpt-4o-mini','GPT-4o mini',150000,75000,600000,0,0,25,10000,1,8192,1,0,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565'),('2e692c27-b556-11f1-9741-4ee37b987cb8','ollama','deepseek-r1:8b','DeepSeek R1 8B (local)',0,0,0,0,0,25,10000,0,8192,1,1,1,1,1,'2026-09-21 00:48:37.565','2026-09-21 00:48:37.565');
-/*!40000 ALTER TABLE `ai_model_rates` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `schema_migrations` WRITE;
-/*!40000 ALTER TABLE `schema_migrations` DISABLE KEYS */;
-INSERT INTO `schema_migrations` VALUES ('001_create_owners','2026-09-18 05:18:45.327'),('002_create_workflows','2026-09-18 05:18:45.336'),('003_create_tool_credentials','2026-09-18 05:18:45.343'),('004_create_workflow_runs','2026-09-18 05:18:45.352'),('005_create_users','2026-09-21 00:48:37.479'),('006_create_billing','2026-09-21 00:48:37.560'),('007_seed_billing_defaults','2026-09-21 00:48:37.566'),('008_create_app_settings','2026-09-21 15:21:48.669');
-/*!40000 ALTER TABLE `schema_migrations` ENABLE KEYS */;
-UNLOCK TABLES;
+DROP TABLE IF EXISTS `app_settings`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `app_settings` (
+  `setting_key` varchar(64) NOT NULL,
+  `value_enc` text NOT NULL,
+  `updated_by` varchar(64) DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `tool_credentials`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `tool_credentials` (
+  `owner_id` varchar(64) NOT NULL,
+  `tool_id` varchar(64) NOT NULL,
+  `provider` varchar(32) NOT NULL,
+  `access_token_enc` text NOT NULL,
+  `refresh_token_enc` text,
+  `expires_at` datetime(3) DEFAULT NULL,
+  `scopes` json NOT NULL,
+  `connected_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`owner_id`,`tool_id`),
+  CONSTRAINT `fk_tool_credentials_owner` FOREIGN KEY (`owner_id`) REFERENCES `owners` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

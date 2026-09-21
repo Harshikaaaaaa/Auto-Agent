@@ -109,7 +109,7 @@ describe.skipIf(!mysqlAvailable)('credit top-up via webhook', () => {
     expect(tx.filter((t) => t.type === 'TOPUP')).toHaveLength(1);
   });
 
-  it('ignores a webhook whose status is not captured', async () => {
+  it('grants no credits on a failed webhook, and marks the payment FAILED', async () => {
     await payments.createPendingPayment({
       ownerId: OWNER,
       orderId: 'order_pending',
@@ -124,8 +124,49 @@ describe.skipIf(!mysqlAvailable)('credit top-up via webhook', () => {
       status: 'failed',
       amountPaise: 9900,
     });
-    expect(res.handled).toBe(false);
+    // The failed event is handled (recorded) but grants nothing.
+    expect(res.failed).toBe(true);
     expect(await wallet.getWallet(OWNER)).toBeNull();
+    const p = await payments.findPaymentByOrderId('order_pending');
+    expect(p.status).toBe('FAILED');
+  });
+
+  it('ignores a webhook whose status is neither captured nor failed', async () => {
+    const res = await handleVerifiedWebhook({
+      event: 'payment.authorized',
+      orderId: 'order_x',
+      paymentId: 'pay_x',
+      status: 'authorized',
+      amountPaise: 9900,
+    });
+    expect(res.handled).toBe(false);
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('browser verify-callback settlement (localhost path)', () => {
+  it('settles a paid order once via settlePaidOrder, idempotent with the webhook', async () => {
+    const { settlePaidOrder } = await import('../routes.js');
+    const pkgs = await packages.listPackages();
+    const pkg = pkgs.find((p) => p.code === 'pack_99'); // 10,000
+    await payments.createPendingPayment({
+      ownerId: OWNER,
+      orderId: 'order_verify_1',
+      type: 'CREDIT_TOPUP',
+      amountPaise: pkg.pricePaise,
+      packageId: pkg.id,
+    });
+
+    // The browser verify callback settles first (no webhook reached us).
+    const first = await settlePaidOrder('order_verify_1', 'pay_v');
+    expect(first.handled).toBe(true);
+
+    // A later webhook for the same order is a no-op — credited exactly once.
+    const late = await handleVerifiedWebhook(captured('order_verify_1', 'pay_v', pkg.pricePaise));
+    expect(late.handled).toBe(false);
+    expect(late.alreadyPaid).toBe(true);
+
+    const w = await wallet.getWallet(OWNER);
+    expect(w.purchasedCredits).toBe(pkg.credits);
   });
 });
 

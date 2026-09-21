@@ -16,6 +16,7 @@ import {
   formatCredits,
   formatRupees,
   resumeSubscription,
+  verifyPayment,
   type ActiveSubscription,
   type CreditPackage,
   type CreditTransaction,
@@ -235,10 +236,14 @@ function PlansPage() {
       const order = await createSubscribeOrder(plan.id);
       await openRazorpayCheckout(order, {
         description: `${plan.displayName} subscription`,
-        onSuccess: () =>
-          setNotice(
-            `Payment received for ${plan.displayName}. Your plan activates once the payment is confirmed (usually within a few seconds).`,
-          ),
+        onSuccess: async (response) => {
+          try {
+            await verifyPayment(response);
+            setNotice(`Payment confirmed. ${plan.displayName} is now active.`);
+          } catch {
+            setNotice(`Payment received for ${plan.displayName}. It will activate once confirmed.`);
+          }
+        },
         onDismiss: () => setNotice('Checkout closed. Your plan was not changed.'),
       });
     } catch (e) {
@@ -310,10 +315,18 @@ function AddCreditsPage() {
       const order = await createTopupOrder(pkg.id);
       await openRazorpayCheckout(order, {
         description: `${formatCredits(pkg.credits + pkg.bonusCredits)} credits`,
-        onSuccess: () =>
-          setNotice(
-            `Payment received. ${formatCredits(pkg.credits + pkg.bonusCredits)} credits will be added once the payment is confirmed (usually within a few seconds).`,
-          ),
+        onSuccess: async (response) => {
+          try {
+            await verifyPayment(response);
+            setNotice(
+              `Payment confirmed. ${formatCredits(pkg.credits + pkg.bonusCredits)} credits added.`,
+            );
+          } catch {
+            setNotice(
+              `Payment received. ${formatCredits(pkg.credits + pkg.bonusCredits)} credits will be added once confirmed.`,
+            );
+          }
+        },
         onDismiss: () => setNotice('Checkout closed. No credits were purchased.'),
       });
     } catch (e) {

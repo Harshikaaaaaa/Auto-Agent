@@ -193,6 +193,24 @@ export function createSubscribeOrder(planId: string, couponCode?: string) {
   }).then((r) => r.order);
 }
 
+export interface CheckoutResult {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+/**
+ * Confirm a checkout straight from the browser callback. The server verifies the
+ * signature and credits the wallet idempotently — this is what makes a payment
+ * complete on localhost, where Razorpay cannot reach the webhook.
+ */
+export function verifyPayment(result: CheckoutResult) {
+  return postJson<{ ok: boolean; credited: boolean; alreadyCredited: boolean }>(
+    '/api/billing/verify',
+    result,
+  );
+}
+
 export function cancelSubscription() {
   return postJson<{ cancelAtPeriodEnd: boolean }>('/api/billing/subscription/cancel', {});
 }

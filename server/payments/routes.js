@@ -64,14 +64,32 @@ function handle(fn) {
  * markPaidOnce, which is idempotent under a duplicate delivery.
  */
 export async function handleVerifiedWebhook(parsed, { now = new Date() } = {}) {
-  // Only act on a captured payment.
-  if (!parsed.orderId || parsed.status !== 'captured') {
+  if (!parsed.orderId) return { handled: false, reason: 'no_order' };
+
+  // A captured payment grants; a failed one marks the pending payment FAILED so
+  // the history reflects it (a captured order later still settles idempotently).
+  if (parsed.status === 'failed') {
+    await markFailed(parsed.orderId, parsed.event ?? 'payment.failed');
+    return { handled: true, failed: true };
+  }
+  if (parsed.status !== 'captured') {
     return { handled: false, reason: 'not_captured' };
   }
+  return settlePaidOrder(parsed.orderId, parsed.paymentId, { now });
+}
 
+/**
+ * The one place a paid order grants its credits / activates its plan. Runs
+ * inside markPaidOnce, so it fires EXACTLY ONCE per order no matter how many
+ * confirmations arrive — the webhook AND the browser verify callback both funnel
+ * through here, and whichever lands first wins; the rest are no-ops. That is why
+ * the webhook is not mandatory: on localhost the verify callback settles the
+ * order, and in production the webhook does — either way, once.
+ */
+export async function settlePaidOrder(orderId, paymentId, { now = new Date() } = {}) {
   const result = await markPaidOnce(
-    parsed.orderId,
-    parsed.paymentId,
+    orderId,
+    paymentId,
     async (payment, conn) => {
       if (payment.type === 'CREDIT_TOPUP') {
         const pkg = payment.packageId ? await getPackageById(payment.packageId) : null;
@@ -355,6 +373,39 @@ export function setupPaymentRoutes(app) {
         couponId,
       });
       res.json({ order });
+    }),
+  );
+
+  /**
+   * Confirm a payment straight from the browser checkout callback.
+   *
+   * Razorpay's checkout handler returns { order_id, payment_id, signature }; the
+   * signature is HMAC(order_id|payment_id) keyed by the key secret, so a browser
+   * cannot forge it. We verify it server-side and, if valid, settle the order
+   * through the SAME idempotent path the webhook uses. This is what lets a local
+   * deployment (where Razorpay cannot reach the webhook) still credit the wallet
+   * — and it stays safe and exactly-once because settlePaidOrder is idempotent,
+   * so a later webhook for the same order simply no-ops.
+   */
+  app.post(
+    '/api/billing/verify',
+    handle(async (req, res) => {
+      const orderId = String(req.body?.razorpay_order_id ?? '');
+      const paymentId = String(req.body?.razorpay_payment_id ?? '');
+      const signature = String(req.body?.razorpay_signature ?? '');
+
+      if (!razorpay.verifyPaymentSignature({ orderId, paymentId, signature })) {
+        return res.status(400).json({ error: 'invalid_signature' });
+      }
+
+      // The order must belong to the caller — never settle another user's order.
+      const payment = await findPaymentByOrderId(orderId);
+      if (!payment || payment.ownerId !== ownerOf(req)) {
+        return res.status(404).json({ error: 'not_found', message: 'No such order.' });
+      }
+
+      const result = await settlePaidOrder(orderId, paymentId);
+      res.json({ ok: true, credited: result.handled, alreadyCredited: result.alreadyPaid });
     }),
   );
 

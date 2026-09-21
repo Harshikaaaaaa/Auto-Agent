@@ -98,3 +98,32 @@ describe('isConfigured', () => {
     expect(no.isConfigured()).toBe(false);
   });
 });
+
+describe('fetchCapturedPaymentForOrder (server-side reconcile)', () => {
+  it('reports a captured payment from the Orders API', async () => {
+    const { fetchCapturedPaymentForOrder } = await loadRazorpay();
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            { id: 'pay_a', status: 'failed', amount: 9900 },
+            { id: 'pay_b', status: 'captured', amount: 9900 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    const result = await fetchCapturedPaymentForOrder('order_1', { fetchImpl });
+    expect(result).toEqual({ captured: true, paymentId: 'pay_b', amountPaise: 9900 });
+  });
+
+  it('reports not captured when the order has no captured payment', async () => {
+    const { fetchCapturedPaymentForOrder } = await loadRazorpay();
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ items: [{ id: 'pay_a', status: 'created' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    const result = await fetchCapturedPaymentForOrder('order_1', { fetchImpl });
+    expect(result.captured).toBe(false);
+  });
+});

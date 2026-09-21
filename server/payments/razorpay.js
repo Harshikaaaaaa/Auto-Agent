@@ -58,6 +58,43 @@ export async function createOrder(
 }
 
 /**
+ * Ask Razorpay directly whether an order has a CAPTURED payment, via the Orders
+ * API (GET /orders/{id}/payments). This is the source of truth that does not
+ * depend on the browser checkout callback firing or a webhook being reachable —
+ * essential on localhost, where Razorpay's redirect flow can skip the JS
+ * handler and the webhook cannot reach us.
+ *
+ * @returns {Promise<{ captured: boolean, paymentId: string|null, amountPaise: number|null }>}
+ */
+export async function fetchCapturedPaymentForOrder(orderId, { fetchImpl = fetch } = {}) {
+  if (!isConfigured()) throw new GatewayNotConfiguredError(GATEWAY);
+  if (!orderId) return { captured: false, paymentId: null, amountPaise: null };
+
+  const auth = Buffer.from(
+    `${resolveString('RAZORPAY_KEY_ID')}:${resolveString('RAZORPAY_KEY_SECRET')}`,
+  ).toString('base64');
+  const res = await fetchImpl(`${API_BASE}/orders/${encodeURIComponent(orderId)}/payments`, {
+    method: 'GET',
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 300);
+    const err = new Error(`Razorpay order lookup failed (${res.status}). ${detail}`);
+    err.status = 502;
+    throw err;
+  }
+  const data = await res.json();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const captured = items.find((p) => p.status === 'captured');
+  if (!captured) return { captured: false, paymentId: null, amountPaise: null };
+  return {
+    captured: true,
+    paymentId: captured.id ?? null,
+    amountPaise: captured.amount !== undefined ? Number(captured.amount) : null,
+  };
+}
+
+/**
  * Verify a Razorpay webhook signature. The signature is HMAC-SHA256 of the RAW
  * request body keyed by the webhook secret, hex-encoded, in the
  * `x-razorpay-signature` header. Constant-time comparison.

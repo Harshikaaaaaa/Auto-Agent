@@ -15,6 +15,7 @@ import {
   fetchUsageSummary,
   formatCredits,
   formatRupees,
+  reconcilePayments,
   resumeSubscription,
   verifyPayment,
   type ActiveSubscription,
@@ -152,9 +153,21 @@ function useLoader<T>(loader: () => Promise<T>, key: string | number = '') {
 
 // ------------------------------------------------------------------ Overview
 
+/** Reconcile any pending payments against the gateway, then load the balance.
+ * On localhost the checkout callback/webhook may not fire, so this is what makes
+ * a completed payment show up when the user returns to the billing area. */
+async function reconcileThen<T>(loader: () => Promise<T>): Promise<T> {
+  try {
+    await reconcilePayments();
+  } catch {
+    // Reconcile is best-effort (gateway may be unconfigured); load anyway.
+  }
+  return loader();
+}
+
 function OverviewPage() {
   const navigate = useNavigate();
-  const { data, loading, error, reload } = useLoader(fetchBalance);
+  const { data, loading, error, reload } = useLoader(() => reconcileThen(fetchBalance));
 
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
@@ -498,7 +511,9 @@ function TransactionsPage() {
 // ------------------------------------------------------------------ Payments
 
 function PaymentsPage() {
-  const { data, loading, error, reload } = useLoader<PaymentRow[]>(() => fetchPayments(100));
+  const { data, loading, error, reload } = useLoader<PaymentRow[]>(() =>
+    reconcileThen(() => fetchPayments(100)),
+  );
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
   if (!data || data.length === 0) return <EmptyState>No payments yet.</EmptyState>;

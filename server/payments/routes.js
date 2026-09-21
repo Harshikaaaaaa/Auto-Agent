@@ -409,6 +409,42 @@ export function setupPaymentRoutes(app) {
     }),
   );
 
+  /**
+   * Reconcile the caller's recent PENDING payments against Razorpay.
+   *
+   * On localhost the checkout often uses a full-page redirect, so the JS success
+   * handler never fires and /verify is never called; and the webhook cannot
+   * reach us. This endpoint is the safety net: for each of the caller's PENDING
+   * orders it asks Razorpay's Orders API whether a payment was actually
+   * captured, and if so settles it through the same idempotent path. The billing
+   * pages call this on load, so a completed payment is picked up when the user
+   * lands back in the app — no webhook, no callback required.
+   */
+  app.post(
+    '/api/billing/reconcile',
+    handle(async (req, res) => {
+      if (!razorpay.isConfigured()) throw new GatewayNotConfiguredError('razorpay');
+      const owner = ownerOf(req);
+      const pending = (await listPayments(owner, { limit: 20 })).filter(
+        (p) => p.status === 'PENDING' && p.orderId,
+      );
+
+      let settled = 0;
+      for (const p of pending) {
+        try {
+          const found = await razorpay.fetchCapturedPaymentForOrder(p.orderId);
+          if (found.captured) {
+            const result = await settlePaidOrder(p.orderId, found.paymentId);
+            if (result.handled) settled += 1;
+          }
+        } catch (err) {
+          logger.warn({ err, orderId: p.orderId }, 'reconcile lookup failed for one order');
+        }
+      }
+      res.json({ ok: true, checked: pending.length, settled });
+    }),
+  );
+
   /** Cancel at period end (keeps access until the period ends). */
   app.post(
     '/api/billing/subscription/cancel',

@@ -211,6 +211,16 @@ export function verifyPayment(result: CheckoutResult) {
   );
 }
 
+/**
+ * Ask the server to reconcile any of the caller's PENDING payments against
+ * Razorpay and settle the ones that were actually captured. Safe to call on
+ * page load; returns how many it settled. This is what makes payments land on
+ * localhost, where the checkout callback and webhook may never reach us.
+ */
+export function reconcilePayments() {
+  return postJson<{ ok: boolean; checked: number; settled: number }>('/api/billing/reconcile', {});
+}
+
 export function cancelSubscription() {
   return postJson<{ cancelAtPeriodEnd: boolean }>('/api/billing/subscription/cancel', {});
 }

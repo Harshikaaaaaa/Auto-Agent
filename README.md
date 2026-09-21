@@ -19,6 +19,7 @@ The app serves both the UI and the API on one origin (default
 ## Table of contents
 
 - [Requirements](#requirements)
+- [TL;DR commands](#tldr-commands)
 - [Quick start (local, with Docker/Finch)](#quick-start-local-with-dockerfinch)
 - [Local development (without containers)](#local-development-without-containers)
 - [Demo credentials](#demo-credentials)
@@ -36,11 +37,64 @@ The app serves both the UI and the API on one origin (default
 
 ## Requirements
 
-- **Node.js 20+** and npm
-- **MySQL 8+** (the app stores workflows, users, wallets, payments, and usage)
-- One of: **Docker** or **Finch** (for the container workflow), OR a local MySQL
-- Optional: **Ollama** for a free local model; **Chromium** is bundled in the
-  image for JavaScript page rendering
+| Requirement               | Version              | Needed for                                 | How to check                           |
+| ------------------------- | -------------------- | ------------------------------------------ | -------------------------------------- |
+| **Node.js**               | 20 or newer          | Build + run the server                     | `node -v`                              |
+| **npm**                   | 9+ (ships with Node) | Install dependencies                       | `npm -v`                               |
+| **MySQL**                 | 8.0+                 | Workflows, users, wallets, payments, usage | `mysql --version`                      |
+| **Docker** _or_ **Finch** | any recent           | Container workflow (bundles app + MySQL)   | `docker --version` / `finch --version` |
+| **Git**                   | any                  | Clone the repo                             | `git --version`                        |
+
+Optional:
+
+- **Ollama** — a free local AI model (`AI_PROVIDER=ollama`, billed at 0).
+- **Chromium** — for JavaScript page rendering; already bundled in the container
+  image, so nothing to install for the container workflow.
+- **Razorpay test account** — to exercise payments end to end.
+
+> You need **either** the container toolchain (Docker/Finch) **or** a local
+> MySQL + Node. The container path is simplest because it starts MySQL for you.
+
+---
+
+## TL;DR commands
+
+**Local (containers — recommended):**
+
+```bash
+git clone <repo-url> AutoAgent && cd AutoAgent
+cp .env.example .env            # then edit .env (see below)
+docker compose up --build       # or: finch compose up --build
+# open http://localhost:3234
+```
+
+**Local (bare metal, no containers):**
+
+```bash
+git clone <repo-url> AutoAgent && cd AutoAgent
+npm install
+cp .env.example .env.local      # then edit DB_* + secrets
+# ensure MySQL is running and the database exists:
+mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS autoagent;"
+npm run build                   # build the client once
+npm run server                  # serves UI + API on http://localhost:3234
+```
+
+**Generate the required secrets:**
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # run 3x
+```
+
+**Production (containers):**
+
+```bash
+# set real secrets as environment variables (NOT committed), then:
+NODE_ENV=production docker compose up --build -d
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>:3234/readyz   # expect 200
+```
+
+The full, step-by-step versions of each are below.
 
 ---
 
@@ -373,42 +427,127 @@ If MySQL is not reachable, those suites **skip** rather than fail.
 
 ## Production deployment
 
-The app is a single container that serves the UI and the API.
+The app is a single container that serves the UI and the API. Follow these steps
+in order.
 
-### Checklist
+### Step 1 — Provision infrastructure
 
-1. **Set real secrets as environment variables** (not committed):
-   `APP_PASSWORD`, `SESSION_SECRET`, `CREDENTIAL_SECRET`, `DB_PASSWORD`, provider
-   key(s), and Razorpay keys.
-2. **`NODE_ENV=production`** — enables every guard (auth required, HTTPS cookie,
-   HSTS, DB TLS check, no dev bypass).
-3. **HTTPS** — serve behind TLS. Keep `SESSION_COOKIE_SECURE=true` (the default
-   in production). Do **not** set `OAUTH_ALLOW_INSECURE_REDIRECT`.
-4. **Database** — a password-protected MySQL. Use `DB_SSL=true` for any DB that
-   crosses an untrusted network. `DB_TRUST_PRIVATE_NETWORK=true` is only for a
-   private bridge (e.g. the compose network).
-5. **CORS** — set `CORS_ALLOWED_ORIGINS` to your real origin(s); no wildcard.
-6. **Migrations** — `DB_AUTO_MIGRATE=true` runs them on boot, or run them as a
-   separate step and set it `false`.
-7. **Razorpay webhook** — register
-   `https://<host>/api/billing/webhook` for `payment.captured` and set
-   `RAZORPAY_WEBHOOK_SECRET`.
-8. **Google OAuth** (optional) — set all three of `GOOGLE_CLIENT_ID`,
-   `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` (a partial config is
-   rejected) plus `CREDENTIAL_SECRET`, and add the redirect URI to the OAuth
-   client verbatim (https).
-9. **Health checks** — probe **`/readyz`** (ready) and **`/healthz`** (live).
+- A host with Docker (or Finch) installed.
+- A **password-protected MySQL 8+** (managed service or its own container).
+- TLS termination in front of the app (a reverse proxy / load balancer) so the
+  app is reached over **HTTPS**.
 
-### Build & run (containers)
+### Step 2 — Get the code on the host
+
+```bash
+git clone <repo-url> AutoAgent && cd AutoAgent
+```
+
+### Step 3 — Generate secrets
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # SESSION_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # CREDENTIAL_SECRET
+```
+
+Pick a strong `APP_PASSWORD` (≥ 12 chars) and a strong `DB_PASSWORD`.
+
+### Step 4 — Configure production environment
+
+Create `.env` (or inject these as real environment variables). Minimum for a
+production run:
+
+```env
+NODE_ENV=production
+PORT=3234
+CORS_ALLOWED_ORIGINS=https://app.yourdomain.com     # your real origin(s), no wildcard
+
+APP_PASSWORD=<= 12+ chars >
+SESSION_SECRET=<= 32+ hex chars >
+CREDENTIAL_SECRET=<= 32+ hex chars >
+
+# Bootstrap the first admin on first boot (optional but handy):
+ADMIN_BOOTSTRAP_EMAIL=admin@yourdomain.com
+
+# Database (managed / remote MySQL):
+DB_HOST=<db-host>
+DB_PORT=3306
+DB_USER=<db-user>
+DB_PASSWORD=<db-password>
+DB_NAME=autoagent
+DB_SSL=true                 # required for a DB across an untrusted network
+DB_AUTO_MIGRATE=true        # or run migrations separately and set false
+
+# One AI provider:
+AI_PROVIDER=gemini
+GEMINI_API_KEY=<key>
+
+# Razorpay (live/test keys):
+RAZORPAY_KEY_ID=<key_id>
+RAZORPAY_KEY_SECRET=<key_secret>
+RAZORPAY_WEBHOOK_SECRET=<webhook_secret>
+
+# Keep the HTTPS defaults — do NOT set these in production:
+#   SESSION_COOKIE_SECURE stays true, OAUTH_ALLOW_INSECURE_REDIRECT stays unset
+```
+
+> If your MySQL runs as a container on the same private compose network (port not
+> published), set `DB_TRUST_PRIVATE_NETWORK=true` instead of `DB_SSL=true`.
+> `NODE_ENV=production` enables every guard: auth required, HTTPS cookie, HSTS,
+> the DB-TLS check, and no dev bypass.
+
+### Step 5 — Build and start
 
 ```bash
 docker compose up --build -d        # or: finch compose up --build -d
-curl -s -o /dev/null -w '%{http_code}\n' http://<host>:3234/readyz   # expect 200
 ```
 
-The compose file forces `NODE_ENV=production` and reads secrets from `.env` via
-`${VAR}` substitution (Finch ignores `env_file`, so secrets are also listed
-explicitly in the `environment:` block — keep them in sync with `.env.example`).
+Migrations run automatically on boot (`DB_AUTO_MIGRATE=true`). The compose file
+forces `NODE_ENV=production` and reads secrets from `.env` via `${VAR}`
+substitution (Finch ignores `env_file`, so the secrets are also listed
+explicitly in the compose `environment:` block — keep them in sync with
+`.env.example`).
+
+### Step 6 — Verify
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://app.yourdomain.com/readyz    # expect 200
+curl -s -o /dev/null -w '%{http_code}\n' https://app.yourdomain.com/healthz   # expect 200
+```
+
+Wire `/readyz` (readiness) and `/healthz` (liveness) into your orchestrator's
+health checks.
+
+### Step 7 — First admin
+
+If you set `ADMIN_BOOTSTRAP_EMAIL`, the first sign-up with that email becomes
+admin. Otherwise sign up, then promote in MySQL:
+
+```sql
+UPDATE users SET role='admin' WHERE email='admin@yourdomain.com';
+```
+
+### Step 8 — Razorpay webhook (recommended in production)
+
+In the Razorpay dashboard add a webhook:
+
+- **URL:** `https://app.yourdomain.com/api/billing/webhook`
+- **Event:** `payment.captured` (optionally `payment.failed`)
+- **Secret:** must equal `RAZORPAY_WEBHOOK_SECRET`.
+
+### Step 9 — Google OAuth (optional)
+
+Set all three of `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_OAUTH_REDIRECT_URI` (a partial config is rejected at boot) plus
+`CREDENTIAL_SECRET`, and add the redirect URI to the Google OAuth client
+**verbatim** (must be https in production).
+
+### Redeploying a new version
+
+```bash
+git pull
+docker compose up --build -d --force-recreate app   # or finch; use --no-cache if a stale bundle is served
+```
 
 ---
 

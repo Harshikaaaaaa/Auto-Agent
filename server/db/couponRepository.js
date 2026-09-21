@@ -154,6 +154,46 @@ export async function createCoupon(input, { now = new Date() } = {}) {
   return findCouponByCode(input.code);
 }
 
+/** A coupon by id, or null. */
+export async function getCouponById(id) {
+  const [rows] = await getPool().query('SELECT * FROM coupons WHERE id = ? LIMIT 1', [id]);
+  return rows.length > 0 ? mapCoupon(rows[0]) : null;
+}
+
+/**
+ * Update the mutable fields of a coupon (admin console). The common case is
+ * enabling/disabling; the discount fields and caps can also be edited. The code
+ * and type are immutable here (create a new coupon to change those).
+ */
+export async function updateCoupon(id, fields, { now = new Date() } = {}) {
+  const columns = {
+    percentBps: 'percent_bps',
+    fixedDiscountPaise: 'fixed_discount_paise',
+    bonusCredits: 'bonus_credits',
+    appliesTo: 'applies_to',
+    firstPaymentOnly: 'first_payment_only',
+    maxRedemptions: 'max_redemptions',
+    perUserLimit: 'per_user_limit',
+    startsAt: 'starts_at',
+    endsAt: 'ends_at',
+    enabled: 'enabled',
+  };
+  const sets = [];
+  const params = [];
+  for (const [key, col] of Object.entries(columns)) {
+    if (fields[key] === undefined) continue;
+    let value = fields[key];
+    if (['firstPaymentOnly', 'enabled'].includes(key)) value = value ? 1 : 0;
+    sets.push(`${col} = ?`);
+    params.push(value);
+  }
+  if (sets.length === 0) return getCouponById(id);
+  sets.push('updated_at = ?');
+  params.push(now, id);
+  await getPool().query(`UPDATE coupons SET ${sets.join(', ')} WHERE id = ?`, params);
+  return getCouponById(id);
+}
+
 /** List coupons (admin). */
 export async function listCoupons() {
   const [rows] = await getPool().query('SELECT * FROM coupons ORDER BY created_at DESC');

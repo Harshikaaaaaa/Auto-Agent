@@ -31,6 +31,8 @@ let wallet;
 let aiUsage;
 let rateCard;
 let settings;
+let users;
+let subscriptions;
 let server;
 let baseUrl;
 
@@ -68,6 +70,8 @@ beforeAll(async () => {
   aiUsage = m.aiUsage;
   rateCard = m.rateCard;
   settings = m.settings;
+  users = m.users;
+  subscriptions = m.subscriptions;
   await settings.loadSettingsCache();
 
   const { requireAdmin } = await import('../../auth/session.js');
@@ -263,5 +267,133 @@ describe.skipIf(!mysqlAvailable)('runtime settings', () => {
     expect(await settings.getSetting('OPENAI_MODEL')).toBe('gpt-4o');
     await req('PUT', '/api/admin/settings', { OPENAI_MODEL: '' });
     expect(await settings.getSetting('OPENAI_MODEL')).toBeNull();
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('user role + status actions', () => {
+  it('changes a role and suspends/reactivates a real user', async () => {
+    const { user } = await users.createUser({
+      email: 'target@example.com',
+      password: 'pw12345678',
+    });
+    const oid = user.ownerId;
+
+    const promote = await req('PUT', `/api/admin/users/${oid}/role`, { role: 'admin' });
+    expect(promote.status).toBe(200);
+    expect(promote.json.user.role).toBe('admin');
+
+    const suspend = await req('PUT', `/api/admin/users/${oid}/status`, { status: 'suspended' });
+    expect(suspend.status).toBe(200);
+    expect(suspend.json.user.status).toBe('suspended');
+
+    const reactivate = await req('PUT', `/api/admin/users/${oid}/status`, { status: 'active' });
+    expect(reactivate.json.user.status).toBe('active');
+  });
+
+  it('rejects an unknown role/status and a missing user', async () => {
+    const { user } = await users.createUser({ email: 't2@example.com', password: 'pw12345678' });
+    expect(
+      (await req('PUT', `/api/admin/users/${user.ownerId}/role`, { role: 'root' })).status,
+    ).toBe(400);
+    expect((await req('PUT', `/api/admin/users/nope/status`, { status: 'active' })).status).toBe(
+      404,
+    );
+  });
+
+  it('403s a non-admin', async () => {
+    currentSession = { sub: USER, role: 'user' };
+    expect((await req('PUT', `/api/admin/users/x/role`, { role: 'admin' })).status).toBe(403);
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('assign plan', () => {
+  it('activates a plan and resets the subscription credit bucket', async () => {
+    const { user } = await users.createUser({ email: 'plan@example.com', password: 'pw12345678' });
+    const plans = await subscriptions.listPlans({ includeDisabled: true });
+    const pro = plans.find((p) => p.code === 'pro');
+
+    const res = await req('PUT', `/api/admin/users/${user.ownerId}/plan`, { planId: pro.id });
+    expect(res.status).toBe(200);
+    expect(res.json.subscription.planCode).toBe('pro');
+    expect(res.json.wallet.subscriptionCredits).toBe(pro.includedCredits);
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('plans / packages / coupons CRUD', () => {
+  // Unique per run so re-running against a persistent DB never hits a stale
+  // duplicate-code row (plans/packages/coupons are not truncated between tests).
+  const uniq = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  it('creates and updates a plan', async () => {
+    const create = await req('POST', '/api/admin/plans', {
+      code: `team_${uniq()}`,
+      displayName: 'Team',
+      pricePaise: 499900,
+      includedCredits: 500000,
+    });
+    expect(create.status).toBe(201);
+    const id = create.json.plan.id;
+
+    const upd = await req('PUT', `/api/admin/plans/${id}`, { pricePaise: 399900, enabled: false });
+    expect(upd.status).toBe(200);
+    expect(upd.json.plan.pricePaise).toBe(399900);
+    expect(upd.json.plan.enabled).toBe(false);
+  });
+
+  it('rejects a duplicate plan code', async () => {
+    const code = `dup_${uniq()}`;
+    await req('POST', '/api/admin/plans', { code, displayName: 'Dup' });
+    const again = await req('POST', '/api/admin/plans', { code, displayName: 'Dup2' });
+    expect(again.status).toBe(409);
+  });
+
+  it('creates and updates a package', async () => {
+    const create = await req('POST', '/api/admin/packages', {
+      code: `pack_${uniq()}`,
+      displayName: 'Test pack',
+      pricePaise: 9900,
+      credits: 10000,
+    });
+    expect(create.status).toBe(201);
+    const upd = await req('PUT', `/api/admin/packages/${create.json.package.id}`, {
+      enabled: false,
+    });
+    expect(upd.json.package.enabled).toBe(false);
+  });
+
+  it('creates a coupon and toggles it', async () => {
+    const create = await req('POST', '/api/admin/coupons', {
+      code: `SAVE_${uniq()}`,
+      couponType: 'percentage',
+      percentBps: 1000,
+    });
+    expect(create.status).toBe(201);
+    const id = create.json.coupon.id;
+    const off = await req('PUT', `/api/admin/coupons/${id}`, { enabled: false });
+    expect(off.json.coupon.enabled).toBe(false);
+  });
+
+  it('rejects a coupon with an invalid type', async () => {
+    const res = await req('POST', '/api/admin/coupons', {
+      code: `BAD_${uniq()}`,
+      couponType: 'weird',
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('dashboard metrics', () => {
+  it('returns the metric shape', async () => {
+    const res = await req('GET', '/api/admin/dashboard');
+    expect(res.status).toBe(200);
+    expect(res.json.metrics).toHaveProperty('users');
+    expect(res.json.metrics).toHaveProperty('mrrPaise');
+    expect(res.json.metrics).toHaveProperty('creditsOutstanding');
+    expect(Array.isArray(res.json.recentPayments)).toBe(true);
+  });
+
+  it('403s a non-admin', async () => {
+    currentSession = { sub: USER, role: 'user' };
+    expect((await req('GET', '/api/admin/dashboard')).status).toBe(403);
   });
 });

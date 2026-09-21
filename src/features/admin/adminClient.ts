@@ -63,8 +63,12 @@ export interface Coupon {
   couponType: string;
   percentBps: number | null;
   fixedDiscountPaise: number | null;
+  bonusCredits?: number | null;
+  appliesTo?: string;
+  perUserLimit?: number;
   maxRedemptions: number | null;
-  timesRedeemed: number;
+  timesRedeemed?: number;
+  redeemedCount?: number;
   enabled: boolean;
 }
 
@@ -183,4 +187,169 @@ export function updateSettings(patch: Record<string, string | boolean | null>) {
     '/api/admin/settings',
     patch,
   );
+}
+
+// ---------------------------------------------------------------- dashboard
+
+export interface DashboardMetrics {
+  users: number;
+  suspendedUsers: number;
+  activeSubscriptions: number;
+  mrrPaise: number;
+  creditsOutstanding: number;
+  creditsUsedThisMonth: number;
+  revenueThisMonthPaise: number;
+  revenueTotalPaise: number;
+}
+
+export interface RecentPayment {
+  id: string;
+  ownerId: string;
+  email: string | null;
+  type: string;
+  amountPaise: number;
+  status: string;
+  createdAt: string | null;
+}
+
+export function fetchDashboard() {
+  return getJson<{ metrics: DashboardMetrics; recentPayments: RecentPayment[] }>(
+    '/api/admin/dashboard',
+  );
+}
+
+// ------------------------------------------------------------- user actions
+
+export function setUserRole(ownerId: string, role: 'user' | 'admin') {
+  return send<{ user: AdminUser }>('PUT', `/api/admin/users/${encodeURIComponent(ownerId)}/role`, {
+    role,
+  }).then((r) => r.user);
+}
+
+export function setUserStatus(ownerId: string, status: 'active' | 'suspended') {
+  return send<{ user: AdminUser }>(
+    'PUT',
+    `/api/admin/users/${encodeURIComponent(ownerId)}/status`,
+    { status },
+  ).then((r) => r.user);
+}
+
+export function assignUserPlan(ownerId: string, planId: string) {
+  return send<{ subscription: ActiveSubscription | null; wallet: WalletBalance }>(
+    'PUT',
+    `/api/admin/users/${encodeURIComponent(ownerId)}/plan`,
+    { planId },
+  );
+}
+
+// ------------------------------------------------------------------- plans
+
+export interface AdminPlan {
+  id: string;
+  code: string;
+  displayName: string;
+  pricePaise: number;
+  billingCycle: string;
+  includedCredits: number;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export function createPlan(input: {
+  code: string;
+  displayName: string;
+  pricePaise: number;
+  includedCredits: number;
+  billingCycle?: string;
+  sortOrder?: number;
+}) {
+  return send<{ plan: AdminPlan }>('POST', '/api/admin/plans', input).then((r) => r.plan);
+}
+
+export function updatePlan(
+  id: string,
+  fields: Partial<Omit<AdminPlan, 'id' | 'code'>> & { enabled?: boolean },
+) {
+  return send<{ plan: AdminPlan }>(
+    'PUT',
+    `/api/admin/plans/${encodeURIComponent(id)}`,
+    fields,
+  ).then((r) => r.plan);
+}
+
+// ---------------------------------------------------------------- packages
+
+export interface AdminPackage {
+  id: string;
+  code: string;
+  displayName: string;
+  pricePaise: number;
+  credits: number;
+  bonusCredits: number;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export function createPackage(input: {
+  code: string;
+  displayName: string;
+  pricePaise: number;
+  credits: number;
+  bonusCredits?: number;
+  sortOrder?: number;
+}) {
+  return send<{ package: AdminPackage }>('POST', '/api/admin/packages', input).then(
+    (r) => r.package,
+  );
+}
+
+export function updatePackage(
+  id: string,
+  fields: Partial<Omit<AdminPackage, 'id' | 'code'>> & { enabled?: boolean },
+) {
+  return send<{ package: AdminPackage }>(
+    'PUT',
+    `/api/admin/packages/${encodeURIComponent(id)}`,
+    fields,
+  ).then((r) => r.package);
+}
+
+// ----------------------------------------------------------------- coupons
+
+export function createRate(input: Partial<RateRow> & { provider: string; modelId: string }) {
+  return send<{ rate: RateRow }>('POST', '/api/admin/rates', input).then((r) => r.rate);
+}
+
+export function createCoupon(input: {
+  code: string;
+  couponType: 'percentage' | 'fixed' | 'bonus_credits';
+  percentBps?: number | null;
+  fixedDiscountPaise?: number | null;
+  bonusCredits?: number | null;
+  appliesTo?: string;
+  maxRedemptions?: number | null;
+  perUserLimit?: number;
+}) {
+  return send<{ coupon: Coupon }>('POST', '/api/admin/coupons', input).then((r) => r.coupon);
+}
+
+export function updateCoupon(id: string, fields: { enabled?: boolean; maxRedemptions?: number }) {
+  return send<{ coupon: Coupon }>(
+    'PUT',
+    `/api/admin/coupons/${encodeURIComponent(id)}`,
+    fields,
+  ).then((r) => r.coupon);
+}
+
+// ------------------------------------------------------------ settings test
+
+export interface AiProbe {
+  ok: boolean;
+  provider: string;
+  model: string;
+  detail: string;
+}
+
+export function testAiConnection() {
+  return getJson<{ probe: AiProbe }>('/api/admin/settings/test-ai').then((r) => r.probe);
 }

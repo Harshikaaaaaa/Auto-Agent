@@ -166,3 +166,34 @@ export async function listUsers({ limit = 50, search } = {}) {
   );
   return rows.map(mapPublic);
 }
+
+const USER_ROLES = ['user', 'admin'];
+const USER_STATUSES = ['active', 'suspended'];
+
+/**
+ * Set a user's role (user|admin). Admin console. Returns the updated public
+ * user, or null when the owner does not exist. Rejects an unknown role.
+ */
+export async function setUserRole(ownerId, role) {
+  if (!USER_ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
+  await getPool().query('UPDATE users SET role = ?, updated_at = ? WHERE owner_id = ?', [
+    role,
+    new Date(),
+    ownerId,
+  ]);
+  return findUserByOwnerId(ownerId);
+}
+
+/**
+ * Set a user's status (active|suspended). Suspending keeps all data; it only
+ * blocks the account. Returns the updated public user, or null.
+ */
+export async function setUserStatus(ownerId, status) {
+  if (!USER_STATUSES.includes(status)) throw new Error(`Unknown status "${status}"`);
+  await getPool().query('UPDATE users SET status = ?, updated_at = ? WHERE owner_id = ?', [
+    status,
+    new Date(),
+    ownerId,
+  ]);
+  return findUserByOwnerId(ownerId);
+}

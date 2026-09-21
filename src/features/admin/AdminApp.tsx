@@ -23,16 +23,31 @@ import {
 import {
   AdminError,
   adjustCredits,
+  assignUserPlan,
+  createCoupon,
+  createPackage,
+  createPlan,
+  createRate,
   fetchAdminPackages,
   fetchAdminPlans,
   fetchCoupons,
+  fetchDashboard,
   fetchRates,
   fetchSettings,
   fetchUserDetail,
   fetchUsers,
+  setUserRole,
+  setUserStatus,
+  testAiConnection,
+  updateCoupon,
+  updatePackage,
+  updatePlan,
   updateRate,
   updateSettings,
+  type AdminPackage,
+  type AdminPlan,
   type AdminUserDetail,
+  type Coupon,
   type RateRow,
   type SettingStatus,
 } from './adminClient';
@@ -149,37 +164,52 @@ function useLoader<T>(loader: () => Promise<T>, key: string | number = '') {
 // ----------------------------------------------------------------- Dashboard
 
 function DashboardPage() {
-  const users = useLoader(() => fetchUsers());
-  const plans = useLoader(fetchAdminPlans);
-  const rates = useLoader(fetchRates);
+  const { data, loading, error, reload } = useLoader(fetchDashboard);
+  if (loading) return <Loading />;
+  if (error) return <ErrorState message={error} onRetry={reload} />;
+  if (!data) return null;
 
-  if (users.loading || plans.loading || rates.loading) return <Loading />;
-  if (users.error) return <ErrorState message={users.error} onRetry={users.reload} />;
-
+  const m = data.metrics;
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <Card>
-          <SectionLabel>Users</SectionLabel>
-          <p className="text-3xl font-semibold tabular-nums">{users.data?.length ?? 0}</p>
-        </Card>
-        <Card>
-          <SectionLabel>Plans</SectionLabel>
-          <p className="text-3xl font-semibold tabular-nums">{plans.data?.length ?? 0}</p>
-        </Card>
-        <Card>
-          <SectionLabel>Rate rows</SectionLabel>
-          <p className="text-3xl font-semibold tabular-nums">{rates.data?.length ?? 0}</p>
-        </Card>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Metric label="Users" value={String(m.users)} sub={`${m.suspendedUsers} suspended`} />
+        <Metric label="Active subscriptions" value={String(m.activeSubscriptions)} />
+        <Metric label="MRR" value={formatRupees(m.mrrPaise)} sub="monthly plans" />
+        <Metric label="Revenue (total)" value={formatRupees(m.revenueTotalPaise)} />
+        <Metric label="Revenue (this month)" value={formatRupees(m.revenueThisMonthPaise)} />
+        <Metric label="Credits outstanding" value={formatCredits(m.creditsOutstanding)} />
+        <Metric label="Credits used (month)" value={formatCredits(m.creditsUsedThisMonth)} />
       </div>
+
       <Card>
-        <SectionLabel>Quick links</SectionLabel>
-        <p className="text-sm text-white/50">
-          Manage accounts, adjust credits, edit the AI rate card, and review plans, packages, and
-          coupons from the navigation on the left.
-        </p>
+        <SectionLabel>Recent payments</SectionLabel>
+        {data.recentPayments.length === 0 ? (
+          <EmptyState>No payments yet.</EmptyState>
+        ) : (
+          <Table
+            head={['User', 'Type', 'Amount', 'Status', 'When']}
+            rows={data.recentPayments.map((p) => [
+              p.email ?? p.ownerId,
+              p.type,
+              formatRupees(p.amountPaise),
+              p.status,
+              p.createdAt ? new Date(p.createdAt).toLocaleString() : '—',
+            ])}
+          />
+        )}
       </Card>
     </div>
+  );
+}
+
+function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <Card>
+      <SectionLabel>{label}</SectionLabel>
+      <p className="text-2xl font-semibold tabular-nums text-white">{value}</p>
+      {sub && <p className="mt-0.5 text-2xs text-white/35">{sub}</p>}
+    </Card>
   );
 }
 
@@ -253,11 +283,17 @@ function UserDrawer({ ownerId, onClose }: { ownerId: string; onClose: () => void
       {error && <ErrorState message={error} onRetry={reload} />}
       {data && (
         <div className="space-y-5">
-          <div>
-            <p className="text-lg font-semibold">{data.user.email}</p>
-            <p className="text-xs text-white/45">
-              {data.user.ownerId} · {data.user.role} · {data.user.status}
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-lg font-semibold">{data.user.email}</p>
+              <p className="text-xs text-white/45">
+                {data.user.ownerId} · {data.user.role} ·{' '}
+                <span className={data.user.status === 'suspended' ? 'text-rose-300' : ''}>
+                  {data.user.status}
+                </span>
+                {data.subscription ? ` · ${data.subscription.planName}` : ''}
+              </p>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -266,6 +302,10 @@ function UserDrawer({ ownerId, onClose }: { ownerId: string; onClose: () => void
             <Stat label="Purchased" value={formatCredits(data.wallet?.purchasedCredits ?? 0)} />
             <Stat label="Bonus" value={formatCredits(data.wallet?.bonusCredits ?? 0)} />
           </div>
+
+          <UserActions user={data.user} onChanged={reload} />
+
+          <AssignPlanForm ownerId={ownerId} onAssigned={reload} />
 
           <AdjustForm ownerId={ownerId} onAdjusted={reload} />
 
@@ -290,6 +330,112 @@ function UserDrawer({ ownerId, onClose }: { ownerId: string; onClose: () => void
         </div>
       )}
     </Card>
+  );
+}
+
+function UserActions({
+  user,
+  onChanged,
+}: {
+  user: AdminUserDetail['user'];
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setErr(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof AdminError ? e.message : 'Action failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const isAdmin = user.role === 'admin';
+  const isSuspended = user.status === 'suspended';
+
+  return (
+    <div className="rounded-2xl border border-hairline bg-surface-2/40 p-4">
+      <SectionLabel>Account actions</SectionLabel>
+      <div className="flex flex-wrap gap-2">
+        <GhostButton
+          onClick={() => run('role', () => setUserRole(user.ownerId, isAdmin ? 'user' : 'admin'))}
+          disabled={busy !== null}
+        >
+          {busy === 'role' ? 'Saving…' : isAdmin ? 'Demote to user' : 'Promote to admin'}
+        </GhostButton>
+        <GhostButton
+          onClick={() =>
+            run('status', () => setUserStatus(user.ownerId, isSuspended ? 'active' : 'suspended'))
+          }
+          disabled={busy !== null}
+        >
+          {busy === 'status' ? 'Saving…' : isSuspended ? 'Reactivate' : 'Suspend'}
+        </GhostButton>
+      </div>
+      {err && <p className="mt-2 text-xs text-rose-300">{err}</p>}
+    </div>
+  );
+}
+
+function AssignPlanForm({ ownerId, onAssigned }: { ownerId: string; onAssigned: () => void }) {
+  const { data: plans } = useLoader(fetchAdminPlans);
+  const [planId, setPlanId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const assign = async () => {
+    if (!planId) {
+      setErr('Choose a plan.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      await assignUserPlan(ownerId, planId);
+      setNotice('Plan assigned and subscription credits reset.');
+      onAssigned();
+    } catch (e) {
+      setErr(e instanceof AdminError ? e.message : 'Assign failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-hairline bg-surface-2/40 p-4">
+      <SectionLabel>Assign plan (no payment)</SectionLabel>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={planId}
+          onChange={(e) => setPlanId(e.target.value)}
+          className="rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-white focus:border-accent/40 focus:outline-none"
+        >
+          <option value="">Select a plan…</option>
+          {(plans ?? []).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.displayName} ({p.code})
+            </option>
+          ))}
+        </select>
+        <PrimaryButton onClick={assign} disabled={busy}>
+          {busy ? 'Assigning…' : 'Assign'}
+        </PrimaryButton>
+      </div>
+      <p className="mt-2 text-2xs text-white/35">
+        Retires the current subscription, activates the chosen plan, and resets the monthly credit
+        bucket to that plan&apos;s allowance.
+      </p>
+      {notice && <p className="mt-2 text-xs text-emerald-300">{notice}</p>}
+      {err && <p className="mt-2 text-xs text-rose-300">{err}</p>}
+    </div>
   );
 }
 
@@ -373,21 +519,102 @@ function PlansPage() {
   const { data, loading, error, reload } = useLoader(fetchAdminPlans);
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
-  if (!data || data.length === 0) return <EmptyState>No plans configured.</EmptyState>;
+
+  return (
+    <div className="space-y-4">
+      {(data ?? []).map((p) => (
+        <PlanEditor key={p.id} plan={p as unknown as AdminPlan} onSaved={reload} />
+      ))}
+      {(data ?? []).length === 0 && <EmptyState>No plans configured.</EmptyState>}
+      <CreatePlanForm onCreated={reload} />
+    </div>
+  );
+}
+
+function PlanEditor({ plan, onSaved }: { plan: AdminPlan; onSaved: () => void }) {
+  const [price, setPrice] = useState(String(plan.pricePaise));
+  const [credits, setCredits] = useState(String(plan.includedCredits));
+  const [enabled, setEnabled] = useState(plan.enabled);
+  const { busy, err, notice, run } = useSaver();
 
   return (
     <Card>
-      <SectionLabel>Subscription plans</SectionLabel>
-      <Table
-        head={['Code', 'Name', 'Price', 'Cycle', 'Included credits']}
-        rows={data.map((p) => [
-          p.code,
-          p.displayName,
-          p.pricePaise > 0 ? formatRupees(p.pricePaise) : 'Free',
-          p.billingCycle,
-          formatCredits(p.includedCredits),
-        ])}
-      />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">
+            {plan.displayName} <span className="text-2xs text-white/40">({plan.code})</span>
+          </p>
+          <p className="text-2xs text-white/40">{plan.billingCycle}</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Price (paise)">
+            <NumInput value={price} onChange={setPrice} />
+          </Field>
+          <Field label="Included credits">
+            <NumInput value={credits} onChange={setCredits} />
+          </Field>
+          <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
+          <PrimaryButton
+            onClick={() =>
+              run(() =>
+                updatePlan(plan.id, {
+                  pricePaise: Math.max(0, Math.round(Number(price))),
+                  includedCredits: Math.max(0, Math.round(Number(credits))),
+                  enabled,
+                }).then(onSaved),
+              )
+            }
+            disabled={busy}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+      </div>
+      <SaveNote notice={notice} err={err} />
+    </Card>
+  );
+}
+
+function CreatePlanForm({ onCreated }: { onCreated: () => void }) {
+  const [f, setF] = useState({ code: '', displayName: '', pricePaise: '', includedCredits: '' });
+  const { busy, err, notice, run } = useSaver();
+  const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
+
+  return (
+    <Card>
+      <SectionLabel>Create a plan</SectionLabel>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Code">
+          <TextInput value={f.code} onChange={set('code')} placeholder="team" />
+        </Field>
+        <Field label="Name">
+          <TextInput value={f.displayName} onChange={set('displayName')} placeholder="Team" />
+        </Field>
+        <Field label="Price (paise)">
+          <NumInput value={f.pricePaise} onChange={set('pricePaise')} />
+        </Field>
+        <Field label="Included credits">
+          <NumInput value={f.includedCredits} onChange={set('includedCredits')} />
+        </Field>
+        <PrimaryButton
+          onClick={() =>
+            run(async () => {
+              await createPlan({
+                code: f.code.trim(),
+                displayName: f.displayName.trim() || f.code.trim(),
+                pricePaise: Math.max(0, Math.round(Number(f.pricePaise) || 0)),
+                includedCredits: Math.max(0, Math.round(Number(f.includedCredits) || 0)),
+              });
+              setF({ code: '', displayName: '', pricePaise: '', includedCredits: '' });
+              onCreated();
+            })
+          }
+          disabled={busy || !f.code.trim()}
+        >
+          {busy ? 'Creating…' : 'Create'}
+        </PrimaryButton>
+      </div>
+      <SaveNote notice={notice} err={err} />
     </Card>
   );
 }
@@ -398,21 +625,114 @@ function PackagesPage() {
   const { data, loading, error, reload } = useLoader(fetchAdminPackages);
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
-  if (!data || data.length === 0) return <EmptyState>No packages configured.</EmptyState>;
+
+  return (
+    <div className="space-y-4">
+      {(data ?? []).map((p) => (
+        <PackageEditor key={p.id} pkg={p as unknown as AdminPackage} onSaved={reload} />
+      ))}
+      {(data ?? []).length === 0 && <EmptyState>No packages configured.</EmptyState>}
+      <CreatePackageForm onCreated={reload} />
+    </div>
+  );
+}
+
+function PackageEditor({ pkg, onSaved }: { pkg: AdminPackage; onSaved: () => void }) {
+  const [price, setPrice] = useState(String(pkg.pricePaise));
+  const [credits, setCredits] = useState(String(pkg.credits));
+  const [bonus, setBonus] = useState(String(pkg.bonusCredits));
+  const [enabled, setEnabled] = useState(pkg.enabled);
+  const { busy, err, notice, run } = useSaver();
 
   return (
     <Card>
-      <SectionLabel>Credit packages</SectionLabel>
-      <Table
-        head={['Code', 'Name', 'Price', 'Credits', 'Bonus']}
-        rows={data.map((p) => [
-          p.code,
-          p.displayName,
-          formatRupees(p.pricePaise),
-          formatCredits(p.credits),
-          formatCredits(p.bonusCredits),
-        ])}
-      />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">
+            {pkg.displayName} <span className="text-2xs text-white/40">({pkg.code})</span>
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Price (paise)">
+            <NumInput value={price} onChange={setPrice} />
+          </Field>
+          <Field label="Credits">
+            <NumInput value={credits} onChange={setCredits} />
+          </Field>
+          <Field label="Bonus">
+            <NumInput value={bonus} onChange={setBonus} />
+          </Field>
+          <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
+          <PrimaryButton
+            onClick={() =>
+              run(() =>
+                updatePackage(pkg.id, {
+                  pricePaise: Math.max(0, Math.round(Number(price))),
+                  credits: Math.max(0, Math.round(Number(credits))),
+                  bonusCredits: Math.max(0, Math.round(Number(bonus))),
+                  enabled,
+                }).then(onSaved),
+              )
+            }
+            disabled={busy}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+      </div>
+      <SaveNote notice={notice} err={err} />
+    </Card>
+  );
+}
+
+function CreatePackageForm({ onCreated }: { onCreated: () => void }) {
+  const [f, setF] = useState({ code: '', displayName: '', pricePaise: '', credits: '', bonus: '' });
+  const { busy, err, notice, run } = useSaver();
+  const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
+
+  return (
+    <Card>
+      <SectionLabel>Create a package</SectionLabel>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Code">
+          <TextInput value={f.code} onChange={set('code')} placeholder="pack_1499" />
+        </Field>
+        <Field label="Name">
+          <TextInput
+            value={f.displayName}
+            onChange={set('displayName')}
+            placeholder="150,000 credits"
+          />
+        </Field>
+        <Field label="Price (paise)">
+          <NumInput value={f.pricePaise} onChange={set('pricePaise')} />
+        </Field>
+        <Field label="Credits">
+          <NumInput value={f.credits} onChange={set('credits')} />
+        </Field>
+        <Field label="Bonus">
+          <NumInput value={f.bonus} onChange={set('bonus')} />
+        </Field>
+        <PrimaryButton
+          onClick={() =>
+            run(async () => {
+              await createPackage({
+                code: f.code.trim(),
+                displayName: f.displayName.trim() || f.code.trim(),
+                pricePaise: Math.max(0, Math.round(Number(f.pricePaise) || 0)),
+                credits: Math.max(0, Math.round(Number(f.credits) || 0)),
+                bonusCredits: Math.max(0, Math.round(Number(f.bonus) || 0)),
+              });
+              setF({ code: '', displayName: '', pricePaise: '', credits: '', bonus: '' });
+              onCreated();
+            })
+          }
+          disabled={busy || !f.code.trim()}
+        >
+          {busy ? 'Creating…' : 'Create'}
+        </PrimaryButton>
+      </div>
+      <SaveNote notice={notice} err={err} />
     </Card>
   );
 }
@@ -423,90 +743,185 @@ function RatesPage() {
   const { data, loading, error, reload } = useLoader(fetchRates);
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
-  if (!data || data.length === 0) return <EmptyState>No rates configured.</EmptyState>;
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-white/45">
         Editing a rate affects new AI requests only — historical usage keeps the rate it was billed
-        at.
+        at. Prices are micro-USD per 1M tokens; markup is ×10 (25 = 2.5×); fee is basis points.
       </p>
-      {data.map((rate) => (
+      {(data ?? []).map((rate) => (
         <RateEditor key={rate.id} rate={rate} onSaved={reload} />
       ))}
+      {(data ?? []).length === 0 && <EmptyState>No rates configured.</EmptyState>}
+      <CreateRateForm onCreated={reload} />
     </div>
   );
 }
 
 function RateEditor({ rate, onSaved }: { rate: RateRow; onSaved: () => void }) {
-  const [markup, setMarkup] = useState(String(rate.markup_multiplier_x10));
-  const [feeBps, setFeeBps] = useState(String(rate.provider_fee_bps));
+  const [f, setF] = useState({
+    input: String(rate.input_price_per_1m_micros),
+    cached: String(rate.cached_input_price_per_1m_micros),
+    output: String(rate.output_price_per_1m_micros),
+    reasoning: String(rate.reasoning_price_per_1m_micros),
+    markup: String(rate.markup_multiplier_x10),
+    fee: String(rate.provider_fee_bps),
+    minCharge: String(rate.minimum_credit_charge),
+    maxTokens: rate.maximum_output_tokens === null ? '' : String(rate.maximum_output_tokens),
+  });
   const [enabled, setEnabled] = useState(rate.enabled);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    setNotice(null);
-    try {
-      await updateRate(rate.id, {
-        markup_multiplier_x10: Math.max(0, Math.round(Number(markup))),
-        provider_fee_bps: Math.max(0, Math.round(Number(feeBps))),
-        enabled,
-      });
-      setNotice('Saved.');
-      onSaved();
-    } catch (e) {
-      setErr(e instanceof AdminError ? e.message : 'Save failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const [free, setFree] = useState(rate.freePlanAllowed);
+  const [starter, setStarter] = useState(rate.starterPlanAllowed);
+  const [pro, setPro] = useState(rate.proPlanAllowed);
+  const [business, setBusiness] = useState(rate.businessPlanAllowed);
+  const { busy, err, notice, run } = useSaver();
+  const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
+  const int = (v: string) => Math.max(0, Math.round(Number(v) || 0));
 
   return (
     <Card>
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold">{rate.displayName}</p>
           <p className="text-2xs text-white/40">
             {rate.provider} · {rate.modelId}
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Markup ×10">
-            <input
-              value={markup}
-              onChange={(e) => setMarkup(e.target.value)}
-              inputMode="numeric"
-              className="w-20 rounded-lg border border-hairline bg-surface-2 px-2.5 py-1.5 text-xs text-white focus:border-accent/40 focus:outline-none"
-            />
-          </Field>
-          <Field label="Fee bps">
-            <input
-              value={feeBps}
-              onChange={(e) => setFeeBps(e.target.value)}
-              inputMode="numeric"
-              className="w-20 rounded-lg border border-hairline bg-surface-2 px-2.5 py-1.5 text-xs text-white focus:border-accent/40 focus:outline-none"
-            />
-          </Field>
-          <label className="flex items-center gap-1.5 text-xs text-white/60">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="accent-accent"
-            />
-            Enabled
-          </label>
-          <PrimaryButton onClick={save} disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
-          </PrimaryButton>
-        </div>
+        <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
       </div>
-      {notice && <p className="mt-2 text-xs text-emerald-300">{notice}</p>}
-      {err && <p className="mt-2 text-xs text-rose-300">{err}</p>}
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Input /1M">
+          <NumInput value={f.input} onChange={set('input')} />
+        </Field>
+        <Field label="Cached /1M">
+          <NumInput value={f.cached} onChange={set('cached')} />
+        </Field>
+        <Field label="Output /1M">
+          <NumInput value={f.output} onChange={set('output')} />
+        </Field>
+        <Field label="Reasoning /1M">
+          <NumInput value={f.reasoning} onChange={set('reasoning')} />
+        </Field>
+        <Field label="Markup ×10">
+          <NumInput value={f.markup} onChange={set('markup')} width="w-20" />
+        </Field>
+        <Field label="Fee bps">
+          <NumInput value={f.fee} onChange={set('fee')} width="w-20" />
+        </Field>
+        <Field label="Min charge">
+          <NumInput value={f.minCharge} onChange={set('minCharge')} width="w-24" />
+        </Field>
+        <Field label="Max out tokens">
+          <NumInput value={f.maxTokens} onChange={set('maxTokens')} width="w-24" />
+        </Field>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        <span className="text-2xs uppercase tracking-[0.12em] text-white/35">Allowed on:</span>
+        <Toggle checked={free} onChange={setFree} label="Free" />
+        <Toggle checked={starter} onChange={setStarter} label="Starter" />
+        <Toggle checked={pro} onChange={setPro} label="Pro" />
+        <Toggle checked={business} onChange={setBusiness} label="Business" />
+        <PrimaryButton
+          onClick={() =>
+            run(() =>
+              updateRate(rate.id, {
+                input_price_per_1m_micros: int(f.input),
+                cached_input_price_per_1m_micros: int(f.cached),
+                output_price_per_1m_micros: int(f.output),
+                reasoning_price_per_1m_micros: int(f.reasoning),
+                markup_multiplier_x10: int(f.markup),
+                provider_fee_bps: int(f.fee),
+                minimum_credit_charge: int(f.minCharge),
+                maximum_output_tokens: f.maxTokens.trim() ? int(f.maxTokens) : null,
+                enabled,
+                free_plan_allowed: free,
+                starter_plan_allowed: starter,
+                pro_plan_allowed: pro,
+                business_plan_allowed: business,
+              } as Partial<RateRow>).then(onSaved),
+            )
+          }
+          disabled={busy}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </PrimaryButton>
+      </div>
+      <SaveNote notice={notice} err={err} />
+    </Card>
+  );
+}
+
+function CreateRateForm({ onCreated }: { onCreated: () => void }) {
+  const [f, setF] = useState({
+    provider: 'openrouter',
+    modelId: '',
+    displayName: '',
+    input: '',
+    output: '',
+    markup: '25',
+    fee: '0',
+  });
+  const { busy, err, notice, run } = useSaver();
+  const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
+  const int = (v: string) => Math.max(0, Math.round(Number(v) || 0));
+
+  return (
+    <Card>
+      <SectionLabel>Add a model rate</SectionLabel>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Provider">
+          <select
+            value={f.provider}
+            onChange={(e) => set('provider')(e.target.value)}
+            className={inputClass}
+          >
+            <option value="openrouter">openrouter</option>
+            <option value="gemini">gemini</option>
+            <option value="openai">openai</option>
+            <option value="ollama">ollama</option>
+          </select>
+        </Field>
+        <Field label="Model id">
+          <TextInput value={f.modelId} onChange={set('modelId')} placeholder="openai/gpt-4o" />
+        </Field>
+        <Field label="Name">
+          <TextInput value={f.displayName} onChange={set('displayName')} placeholder="GPT-4o" />
+        </Field>
+        <Field label="Input /1M">
+          <NumInput value={f.input} onChange={set('input')} />
+        </Field>
+        <Field label="Output /1M">
+          <NumInput value={f.output} onChange={set('output')} />
+        </Field>
+        <Field label="Markup ×10">
+          <NumInput value={f.markup} onChange={set('markup')} width="w-20" />
+        </Field>
+        <Field label="Fee bps">
+          <NumInput value={f.fee} onChange={set('fee')} width="w-20" />
+        </Field>
+        <PrimaryButton
+          onClick={() =>
+            run(async () => {
+              await createRate({
+                provider: f.provider,
+                modelId: f.modelId.trim(),
+                displayName: f.displayName.trim() || f.modelId.trim(),
+                input_price_per_1m_micros: int(f.input),
+                output_price_per_1m_micros: int(f.output),
+                markup_multiplier_x10: int(f.markup),
+                provider_fee_bps: int(f.fee),
+              });
+              setF({ ...f, modelId: '', displayName: '', input: '', output: '' });
+              onCreated();
+            })
+          }
+          disabled={busy || !f.modelId.trim()}
+        >
+          {busy ? 'Adding…' : 'Add rate'}
+        </PrimaryButton>
+      </div>
+      <SaveNote notice={notice} err={err} />
     </Card>
   );
 }
@@ -520,29 +935,219 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+const inputClass =
+  'rounded-lg border border-hairline bg-surface-2 px-2.5 py-1.5 text-xs text-white placeholder:text-white/30 focus:border-accent/40 focus:outline-none';
+
+function NumInput({
+  value,
+  onChange,
+  width = 'w-28',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  width?: string;
+}) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      inputMode="numeric"
+      className={`${width} ${inputClass}`}
+    />
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  width = 'w-36',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  width?: string;
+}) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={`${width} ${inputClass}`}
+    />
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-white/60">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="accent-accent"
+      />
+      {label}
+    </label>
+  );
+}
+
+/** Shared busy/notice/error state for the small save/create forms. */
+function useSaver() {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      await fn();
+      setNotice('Saved.');
+    } catch (e) {
+      setErr(e instanceof AdminError ? e.message : 'Save failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, err, notice, run };
+}
+
+function SaveNote({ notice, err }: { notice: string | null; err: string | null }) {
+  if (!notice && !err) return null;
+  return (
+    <p className={`mt-2 text-xs ${err ? 'text-rose-300' : 'text-emerald-300'}`}>{err ?? notice}</p>
+  );
+}
+
 // ------------------------------------------------------------------- Coupons
+
+function couponValue(c: Coupon): string {
+  if (c.couponType === 'percentage') return `${(c.percentBps ?? 0) / 100}%`;
+  if (c.couponType === 'fixed') return formatRupees(c.fixedDiscountPaise ?? 0);
+  return `${formatCredits(c.bonusCredits ?? 0)} credits`;
+}
 
 function CouponsPage() {
   const { data, loading, error, reload } = useLoader(fetchCoupons);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const toggle = async (c: Coupon) => {
+    setBusyId(c.id);
+    try {
+      await updateCoupon(c.id, { enabled: !c.enabled });
+      reload();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
-  if (!data || data.length === 0) return <EmptyState>No coupons created.</EmptyState>;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <SectionLabel>Coupons</SectionLabel>
+        {(data ?? []).length === 0 ? (
+          <EmptyState>No coupons created.</EmptyState>
+        ) : (
+          <Table
+            head={['Code', 'Type', 'Value', 'Redeemed', 'Enabled', '']}
+            rows={(data ?? []).map((c) => {
+              const redeemed = c.redeemedCount ?? c.timesRedeemed ?? 0;
+              return [
+                c.code,
+                c.couponType,
+                couponValue(c),
+                `${redeemed}${c.maxRedemptions ? ` / ${c.maxRedemptions}` : ''}`,
+                c.enabled ? 'Yes' : 'No',
+                <GhostButton key={c.id} onClick={() => toggle(c)} disabled={busyId === c.id}>
+                  {busyId === c.id ? '…' : c.enabled ? 'Disable' : 'Enable'}
+                </GhostButton>,
+              ];
+            })}
+          />
+        )}
+      </Card>
+      <CreateCouponForm onCreated={reload} />
+    </div>
+  );
+}
+
+function CreateCouponForm({ onCreated }: { onCreated: () => void }) {
+  const [code, setCode] = useState('');
+  const [type, setType] = useState<'percentage' | 'fixed' | 'bonus_credits'>('percentage');
+  const [amount, setAmount] = useState('');
+  const [maxRedemptions, setMaxRedemptions] = useState('');
+  const { busy, err, notice, run } = useSaver();
+
+  const amountLabel =
+    type === 'percentage'
+      ? 'Percent (e.g. 10)'
+      : type === 'fixed'
+        ? 'Discount (paise)'
+        : 'Bonus credits';
 
   return (
     <Card>
-      <SectionLabel>Coupons</SectionLabel>
-      <Table
-        head={['Code', 'Type', 'Value', 'Redeemed', 'Enabled']}
-        rows={data.map((c) => [
-          c.code,
-          c.couponType,
-          c.couponType === 'percentage'
-            ? `${(c.percentBps ?? 0) / 100}%`
-            : formatRupees(c.fixedDiscountPaise ?? 0),
-          `${c.timesRedeemed}${c.maxRedemptions ? ` / ${c.maxRedemptions}` : ''}`,
-          c.enabled ? 'Yes' : 'No',
-        ])}
-      />
+      <SectionLabel>Create a coupon</SectionLabel>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Code">
+          <TextInput value={code} onChange={setCode} placeholder="WELCOME10" />
+        </Field>
+        <Field label="Type">
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value as typeof type)}
+            className={inputClass}
+          >
+            <option value="percentage">Percentage</option>
+            <option value="fixed">Fixed (paise)</option>
+            <option value="bonus_credits">Bonus credits</option>
+          </select>
+        </Field>
+        <Field label={amountLabel}>
+          <NumInput value={amount} onChange={setAmount} />
+        </Field>
+        <Field label="Max redemptions (blank = ∞)">
+          <NumInput value={maxRedemptions} onChange={setMaxRedemptions} />
+        </Field>
+        <PrimaryButton
+          onClick={() =>
+            run(async () => {
+              const n = Math.max(0, Math.round(Number(amount) || 0));
+              await createCoupon({
+                code: code.trim(),
+                couponType: type,
+                // Percent is stored as basis points (10% -> 1000).
+                percentBps: type === 'percentage' ? n * 100 : null,
+                fixedDiscountPaise: type === 'fixed' ? n : null,
+                bonusCredits: type === 'bonus_credits' ? n : null,
+                maxRedemptions: maxRedemptions.trim()
+                  ? Math.max(1, Math.round(Number(maxRedemptions)))
+                  : null,
+              });
+              setCode('');
+              setAmount('');
+              setMaxRedemptions('');
+              onCreated();
+            })
+          }
+          disabled={busy || !code.trim()}
+        >
+          {busy ? 'Creating…' : 'Create'}
+        </PrimaryButton>
+      </div>
+      <SaveNote notice={notice} err={err} />
     </Card>
   );
 }
@@ -658,14 +1263,47 @@ function SettingsPage() {
         </Card>
       ))}
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <PrimaryButton onClick={save} disabled={busy}>
           {busy ? 'Saving…' : 'Save changes'}
         </PrimaryButton>
+        <TestAiButton />
         {notice && <span className="text-xs text-emerald-300">{notice}</span>}
         {err && <span className="text-xs text-rose-300">{err}</span>}
       </div>
     </div>
+  );
+}
+
+function TestAiButton() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  const test = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const probe = await testAiConnection();
+      setOk(probe.ok);
+      setResult(`${probe.provider}/${probe.model}: ${probe.detail}`);
+    } catch (e) {
+      setOk(false);
+      setResult(e instanceof AdminError ? e.message : 'Test failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <GhostButton onClick={test} disabled={busy}>
+        {busy ? 'Testing…' : 'Test AI connection'}
+      </GhostButton>
+      {result && (
+        <span className={`text-xs ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>{result}</span>
+      )}
+    </>
   );
 }
 

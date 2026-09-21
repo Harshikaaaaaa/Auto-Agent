@@ -67,6 +67,67 @@ export async function getPlanById(id) {
   };
 }
 
+/**
+ * Update the mutable fields of a plan (admin console). Editing a plan changes
+ * what NEW subscribers get and what the pricing page shows; existing active
+ * subscriptions keep the price/credits captured on their own row.
+ * Returns the updated plan, or null when the id is unknown.
+ */
+export async function updatePlan(id, fields, { now = new Date() } = {}) {
+  const columns = {
+    displayName: 'display_name',
+    pricePaise: 'price_paise',
+    billingCycle: 'billing_cycle',
+    includedCredits: 'included_credits',
+    enabled: 'enabled',
+    sortOrder: 'sort_order',
+  };
+  const sets = [];
+  const params = [];
+  for (const [key, col] of Object.entries(columns)) {
+    if (fields[key] === undefined) continue;
+    let value = fields[key];
+    if (key === 'pricePaise' || key === 'includedCredits') value = Math.round(Number(value));
+    if (key === 'sortOrder') value = Math.round(Number(value));
+    if (key === 'enabled') value = value ? 1 : 0;
+    sets.push(`${col} = ?`);
+    params.push(value);
+  }
+  if (sets.length === 0) return getPlanById(id);
+  sets.push('updated_at = ?');
+  params.push(now, id);
+  await getPool().query(`UPDATE subscription_plans SET ${sets.join(', ')} WHERE id = ?`, params);
+  return getPlanById(id);
+}
+
+/** Create a plan (admin console). */
+export async function createPlan(input, { now = new Date() } = {}) {
+  const crypto = await import('crypto');
+  const id = crypto.randomUUID();
+  await getPool().query(
+    `INSERT INTO subscription_plans
+       (id, code, display_name, price_paise, billing_cycle, included_credits,
+        features, model_access, request_limits, enabled, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      String(input.code ?? '').trim(),
+      input.displayName ?? input.code,
+      Math.round(Number(input.pricePaise ?? 0)),
+      input.billingCycle ?? 'monthly',
+      Math.round(Number(input.includedCredits ?? 0)),
+      JSON.stringify(Array.isArray(input.features) ? input.features : []),
+      JSON.stringify(input.modelAccess ?? {}),
+      JSON.stringify(input.requestLimits ?? {}),
+      input.enabled === false ? 0 : 1,
+      Math.round(Number(input.sortOrder ?? 0)),
+      now,
+      now,
+    ],
+  );
+  return getPlanById(id);
+}
+
 /** All enabled plans for the pricing page, cheapest first. */
 export async function listPlans({ includeDisabled = false } = {}) {
   const where = includeDisabled ? '' : 'WHERE enabled = 1';

@@ -45,6 +45,20 @@ describe('AdminApp', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/admin/dashboard'))
+          return jsonResponse({
+            metrics: {
+              users: 1,
+              suspendedUsers: 0,
+              activeSubscriptions: 0,
+              mrrPaise: 0,
+              creditsOutstanding: 0,
+              creditsUsedThisMonth: 0,
+              revenueThisMonthPaise: 0,
+              revenueTotalPaise: 0,
+            },
+            recentPayments: [],
+          });
         if (url.includes('/api/admin/users')) return jsonResponse({ users: USERS });
         if (url.includes('/api/admin/plans')) return jsonResponse({ plans: [] });
         if (url.includes('/api/admin/rates')) return jsonResponse({ rates: [] });
@@ -53,11 +67,12 @@ describe('AdminApp', () => {
     );
   });
 
-  it('renders the dashboard with the user count from the API', async () => {
+  it('renders the dashboard with metrics from the API', async () => {
     renderAdmin();
     expect(await screen.findByText('Admin Console')).toBeInTheDocument();
-    // The dashboard renders its quick-links card once loaded.
-    expect(await screen.findByText('Quick links')).toBeInTheDocument();
+    // The dashboard renders its metric cards + recent payments once loaded.
+    expect(await screen.findByText('Recent payments')).toBeInTheDocument();
+    expect(await screen.findByText('MRR')).toBeInTheDocument();
   });
 
   it('renders an error state when an admin API returns 403, without crashing', async () => {

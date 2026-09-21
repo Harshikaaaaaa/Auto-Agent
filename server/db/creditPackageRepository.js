@@ -53,4 +53,35 @@ export async function createPackage(input, { now = new Date() } = {}) {
   return getPackageById(id);
 }
 
+/** Update the mutable fields of a package (admin console). */
+export async function updatePackage(id, fields, { now = new Date() } = {}) {
+  const columns = {
+    displayName: 'display_name',
+    pricePaise: 'price_paise',
+    credits: 'credits',
+    bonusCredits: 'bonus_credits',
+    enabled: 'enabled',
+    expiresDays: 'expires_days',
+    sortOrder: 'sort_order',
+  };
+  const sets = [];
+  const params = [];
+  for (const [key, col] of Object.entries(columns)) {
+    if (fields[key] === undefined) continue;
+    let value = fields[key];
+    if (['pricePaise', 'credits', 'bonusCredits', 'sortOrder'].includes(key)) {
+      value = Math.round(Number(value));
+    }
+    if (key === 'expiresDays') value = value === null ? null : Math.round(Number(value));
+    if (key === 'enabled') value = value ? 1 : 0;
+    sets.push(`${col} = ?`);
+    params.push(value);
+  }
+  if (sets.length === 0) return getPackageById(id);
+  sets.push('updated_at = ?');
+  params.push(now, id);
+  await getPool().query(`UPDATE credit_packages SET ${sets.join(', ')} WHERE id = ?`, params);
+  return getPackageById(id);
+}
+
 export { mapPackage };

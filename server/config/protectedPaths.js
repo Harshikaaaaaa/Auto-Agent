@@ -67,6 +67,9 @@ export const PUBLIC_PATHS = [
   '/api/auth/logout',
   '/api/auth/verify',
   '/api/auth/me',
+  // The payment webhook authenticates by HMAC signature, not a session — a
+  // gateway is not a signed-in user. It is verified in its own handler.
+  '/api/billing/webhook',
 ];
 
 /** Every session-gated prefix, for assertions and documentation. */

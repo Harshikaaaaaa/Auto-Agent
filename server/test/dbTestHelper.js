@@ -75,6 +75,9 @@ export async function loadDbModules(vi, overrides = {}) {
   const rateCard = await import('../db/rateCardRepository.js');
   const aiUsage = await import('../db/aiUsageRepository.js');
   const subscriptions = await import('../db/subscriptionRepository.js');
+  const payments = await import('../db/paymentRepository.js');
+  const coupons = await import('../db/couponRepository.js');
+  const packages = await import('../db/creditPackageRepository.js');
 
   await pool.ensureDatabaseExists();
   await migrations.runMigrations();
@@ -92,6 +95,9 @@ export async function loadDbModules(vi, overrides = {}) {
     rateCard,
     aiUsage,
     subscriptions,
+    payments,
+    coupons,
+    packages,
   };
 }
 

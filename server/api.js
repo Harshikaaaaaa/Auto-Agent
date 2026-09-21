@@ -18,6 +18,7 @@ import { OPERATOR_SUBJECT } from './auth/session.js';
 import { env, publicAiConfig } from './config/env.js';
 import { setupAiRoutes } from './ai/routes.js';
 import { setupBillingRoutes } from './billing/routes.js';
+import { setupPaymentRoutes, setupPaymentWebhook } from './payments/routes.js';
 import { probeConfiguredModel } from './ai/providers.js';
 import { logger } from './lib/logger.js';
 import {
@@ -55,7 +56,16 @@ app.use(cookieParser());
 // Large body limit so a workflow can hand a whole scraped page to an AI node
 // without the app rejecting it as "too large"; only the AI provider's own token
 // limit remains. Configurable via JSON_BODY_LIMIT.
-app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
+//
+// The payment webhook is EXCLUDED: its HMAC signature is over the exact raw
+// bytes the gateway sent, so it must reach express.raw with the body intact. If
+// express.json parsed it first the raw bytes would be gone and every webhook
+// would fail verification.
+const jsonParser = express.json({ limit: env.JSON_BODY_LIMIT });
+app.use((req, res, next) => {
+  if (req.path === '/api/billing/webhook') return next();
+  return jsonParser(req, res, next);
+});
 
 // ---- Public endpoints (no session required) ----
 
@@ -93,17 +103,22 @@ app.use(FETCH_PATHS, limiters.fetch, requireSession);
 // proxy spends it. Anonymous access here would let a stranger send mail from the
 // operator's account, so the callback that WRITES the credential is gated too.
 app.use(CONNECTOR_PATHS, limiters.google, requireSession);
+// The payment webhook is PUBLIC but signature-verified, and needs the RAW body,
+// so it is registered BEFORE the /api/billing session guard and before the JSON
+// parser matters (it uses express.raw). A gateway is not a signed-in user.
+setupPaymentWebhook(app);
 // Billing endpoints are session-gated; the admin console is additionally
-// role-gated. The Razorpay webhook is registered elsewhere BEFORE these guards
-// (it is public-but-signature-verified), so it is not shadowed by requireSession.
+// role-gated.
 app.use(BILLING_PATHS, limiters.general, requireSession);
 app.use(ADMIN_PATHS, limiters.general, requireSession, requireAdmin);
 
 // AI backend-for-frontend. Provider credentials live only on this side.
 setupAiRoutes(app);
 
-// Billing reads (wallet, ledger, usage, analytics). Session-gated above.
+// Billing reads (wallet, ledger, usage, analytics) + payment routes (order
+// creation, subscription management, history). Session-gated above.
 setupBillingRoutes(app);
+setupPaymentRoutes(app);
 
 // Setup workflow routes
 setupWorkflowRoutes(app);

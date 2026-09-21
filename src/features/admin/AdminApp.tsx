@@ -71,7 +71,9 @@ const NAV = [
 export function AdminApp() {
   const navigate = useNavigate();
   return (
-    <div className="min-h-screen bg-surface-0 text-white">
+    // #root is height:100vh; overflow:hidden (the canvas needs that), so this
+    // sub-app must scroll internally rather than growing the page.
+    <div className="h-screen overflow-y-auto bg-surface-0 text-white">
       <header className="border-b border-hairline px-6 py-4">
         <div className="mx-auto flex max-w-6xl items-center gap-4">
           <button

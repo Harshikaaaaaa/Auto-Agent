@@ -161,3 +161,26 @@ export function updateRate(id: string, fields: Partial<RateRow>) {
 export function fetchCoupons() {
   return getJson<{ coupons: Coupon[] }>('/api/admin/coupons').then((r) => r.coupons);
 }
+
+export interface SettingStatus {
+  key: string;
+  kind: 'secret' | 'text' | 'bool' | 'enum';
+  source: 'db' | 'env' | 'unset';
+  managedInDb: boolean;
+  configured: boolean;
+  masked?: string | null;
+  value?: string | boolean | null;
+  options?: string[];
+}
+
+export function fetchSettings() {
+  return getJson<{ settings: SettingStatus[] }>('/api/admin/settings').then((r) => r.settings);
+}
+
+export function updateSettings(patch: Record<string, string | boolean | null>) {
+  return send<{ updated: string[]; settings: SettingStatus[] }>(
+    'PUT',
+    '/api/admin/settings',
+    patch,
+  );
+}

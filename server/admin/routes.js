@@ -13,6 +13,8 @@ import { getActiveSubscription, listPlans } from '../db/subscriptionRepository.j
 import { listRates, updateRate, createRate } from '../db/rateCardRepository.js';
 import { listPackages, createPackage } from '../db/creditPackageRepository.js';
 import { listCoupons, createCoupon } from '../db/couponRepository.js';
+import { setSetting } from '../db/settingsRepository.js';
+import { isManagedKey, settingsStatus, MANAGED_SETTINGS } from '../config/settingsService.js';
 
 /**
  * Admin billing console API. Mounted under /api/admin, which api.js gates with
@@ -187,6 +189,67 @@ export function setupAdminRoutes(app) {
     handle(async (req, res) => {
       const coupon = await createCoupon(req.body ?? {});
       res.status(201).json({ coupon });
+    }),
+  );
+
+  // ---- Runtime settings (provider keys, Razorpay, Google, toggles) ----
+
+  /**
+   * The status of every admin-managed setting: configured?, source (db|env|
+   * unset), and — for non-secret text/enum/bool — the effective value. SECRET
+   * values are NEVER returned in full, only a masked suffix (e.g. ••••7a9c).
+   */
+  app.get(
+    '/api/admin/settings',
+    handle(async (_req, res) => {
+      res.json({ settings: settingsStatus() });
+    }),
+  );
+
+  /**
+   * Update one or more settings. Body is a flat object of { KEY: value }.
+   * Rules:
+   *   - Only MANAGED keys are accepted; anything else is rejected (Category-B
+   *     secrets like CREDENTIAL_SECRET are never managed here).
+   *   - An empty string clears the override (falls back to env).
+   *   - A value that is only a mask (leading ••••) is IGNORED, so re-saving the
+   *     form without re-typing a secret does not overwrite the stored value.
+   * Each write records the admin's owner_id as updated_by.
+   */
+  app.put(
+    '/api/admin/settings',
+    handle(async (req, res) => {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const adminId = req.session.sub;
+
+      const unknown = Object.keys(body).filter((k) => !isManagedKey(k));
+      if (unknown.length > 0) {
+        return res.status(400).json({
+          error: 'invalid_request',
+          message: `Not manageable here: ${unknown.join(', ')}.`,
+        });
+      }
+
+      const secretKeys = new Set(
+        MANAGED_SETTINGS.filter((s) => s.kind === 'secret').map((s) => s.key),
+      );
+      const updated = [];
+      for (const [key, raw] of Object.entries(body)) {
+        // A masked echo of an unchanged secret must not clobber the real value.
+        if (secretKeys.has(key) && typeof raw === 'string' && raw.startsWith('••••')) continue;
+
+        const value =
+          raw === null || raw === undefined
+            ? null
+            : typeof raw === 'boolean'
+              ? String(raw)
+              : String(raw);
+        await setSetting(key, value, adminId);
+        updated.push(key);
+      }
+
+      logger.info({ adminId, updated }, 'admin updated runtime settings');
+      res.json({ updated, settings: settingsStatus() });
     }),
   );
 }

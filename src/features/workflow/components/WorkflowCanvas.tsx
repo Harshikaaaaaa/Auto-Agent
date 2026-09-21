@@ -67,6 +67,7 @@ import {
   type GraphPatch,
 } from '@features/ai/services/workflowPatchGenerator';
 import { AI_CONFIG } from '@features/ai/config';
+import { AccountMenu } from '@features/auth/AccountMenu';
 import { WorkflowNode } from './WorkflowNode';
 import { ExecutionMonitor } from './ExecutionMonitor';
 import { RunHistoryPanel } from './RunHistoryPanel';
@@ -1995,6 +1996,12 @@ export function WorkflowCanvas() {
 
   return (
     <div className="flex h-screen w-full bg-[#050505] overflow-hidden text-white relative">
+      {/* Always-visible account menu (email, Billing, Plans, Admin, Logout).
+          Sits above the splash overlay (z-50) so a brand-new user with an empty
+          canvas can still reach billing and sign out. */}
+      <div className="absolute top-0 right-0 z-50 px-5 py-4">
+        <AccountMenu />
+      </div>
       {approvalRequest && (
         <div className="absolute inset-0 bg-black/70 z-[120] flex items-center justify-center p-6">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-2xl">
@@ -2719,7 +2726,7 @@ export function WorkflowCanvas() {
             splash's translucent blur was showing the buttons through faintly.
             It appears once a workflow is on the canvas. */}
         {!showSplash && (
-          <header className="absolute top-0 right-0 z-30 shrink-0 px-5 py-4">
+          <header className="absolute top-14 right-0 z-30 shrink-0 px-5 py-4">
             {/* One floating command bar rather than a row of separate chips:
                 a single surface with hairline dividers between groups, which is
                 what makes a dense toolbar read as intentional. */}

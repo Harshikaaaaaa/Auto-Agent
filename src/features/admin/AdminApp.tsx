@@ -8,6 +8,7 @@ import {
   SlidersHorizontal,
   Ticket,
   LayoutDashboard,
+  KeyRound,
 } from 'lucide-react';
 import { formatCredits, formatRupees } from '@features/billing/billingClient';
 import {
@@ -26,11 +27,14 @@ import {
   fetchAdminPlans,
   fetchCoupons,
   fetchRates,
+  fetchSettings,
   fetchUserDetail,
   fetchUsers,
   updateRate,
+  updateSettings,
   type AdminUserDetail,
   type RateRow,
+  type SettingStatus,
 } from './adminClient';
 
 /**
@@ -46,6 +50,7 @@ const NAV = [
   { to: '/admin/packages', label: 'Packages', icon: Package },
   { to: '/admin/rates', label: 'Rate Card', icon: SlidersHorizontal },
   { to: '/admin/coupons', label: 'Coupons', icon: Ticket },
+  { to: '/admin/settings', label: 'Settings', icon: KeyRound },
 ];
 
 export function AdminApp() {
@@ -97,6 +102,7 @@ export function AdminApp() {
             <Route path="packages" element={<PackagesPage />} />
             <Route path="rates" element={<RatesPage />} />
             <Route path="coupons" element={<CouponsPage />} />
+            <Route path="settings" element={<SettingsPage />} />
           </Routes>
         </main>
       </div>
@@ -538,6 +544,210 @@ function CouponsPage() {
         ])}
       />
     </Card>
+  );
+}
+
+// ------------------------------------------------------------------ Settings
+
+const SETTING_GROUPS: { title: string; note?: string; keys: string[] }[] = [
+  {
+    title: 'AI provider',
+    note: 'The active provider and its default model. Keys below enable each provider.',
+    keys: ['AI_PROVIDER'],
+  },
+  { title: 'OpenRouter', keys: ['OPENROUTER_API_KEY', 'OPENROUTER_MODEL'] },
+  { title: 'Gemini', keys: ['GEMINI_API_KEY', 'GEMINI_MODEL'] },
+  { title: 'OpenAI', keys: ['OPENAI_API_KEY', 'OPENAI_MODEL'] },
+  {
+    title: 'Google OAuth',
+    note: 'Client id + secret for Gmail / Sheets / Drive tools. The redirect URI stays in the environment.',
+    keys: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+  },
+  {
+    title: 'Razorpay payments',
+    note: 'Key id + secret enable checkout; the webhook secret is needed to confirm payments.',
+    keys: ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET'],
+  },
+  {
+    title: 'Feature toggles',
+    note: 'WHATSAPP_ENABLED is read at startup — changing it needs a restart to take effect.',
+    keys: ['FETCH_RENDER_ENABLED', 'WHATSAPP_ENABLED'],
+  },
+];
+
+const LABELS: Record<string, string> = {
+  AI_PROVIDER: 'Active provider',
+  OPENROUTER_API_KEY: 'API key',
+  OPENROUTER_MODEL: 'Model',
+  GEMINI_API_KEY: 'API key',
+  GEMINI_MODEL: 'Model',
+  OPENAI_API_KEY: 'API key',
+  OPENAI_MODEL: 'Model',
+  GOOGLE_CLIENT_ID: 'Client ID',
+  GOOGLE_CLIENT_SECRET: 'Client secret',
+  RAZORPAY_KEY_ID: 'Key ID',
+  RAZORPAY_KEY_SECRET: 'Key secret',
+  RAZORPAY_WEBHOOK_SECRET: 'Webhook secret',
+  FETCH_RENDER_ENABLED: 'JavaScript rendering',
+  WHATSAPP_ENABLED: 'WhatsApp bridge',
+};
+
+function SettingsPage() {
+  const { data, loading, error, reload } = useLoader(fetchSettings);
+  // Only fields the admin actually edited are sent, so untouched secrets are
+  // never overwritten by their masked echo.
+  const [edits, setEdits] = useState<Record<string, string | boolean>>({});
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (loading) return <Loading />;
+  if (error) return <ErrorState message={error} onRetry={reload} />;
+  if (!data) return null;
+
+  const byKey = new Map(data.map((s) => [s.key, s]));
+  const setEdit = (key: string, value: string | boolean) =>
+    setEdits((e) => ({ ...e, [key]: value }));
+
+  const save = async () => {
+    if (Object.keys(edits).length === 0) {
+      setNotice('Nothing changed.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      await updateSettings(edits);
+      setEdits({});
+      setNotice('Saved. New requests use the updated settings immediately.');
+      reload();
+    } catch (e) {
+      setErr(e instanceof AdminError ? e.message : 'Save failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-white/45">
+        These override the server environment: a value set here wins, otherwise the value from{' '}
+        <code className="rounded bg-white/5 px-1">.env</code> is used. Secrets are stored encrypted
+        and never shown in full.
+      </p>
+
+      {SETTING_GROUPS.map((group) => (
+        <Card key={group.title}>
+          <SectionLabel>{group.title}</SectionLabel>
+          {group.note && <p className="mb-3 -mt-1 text-2xs text-white/40">{group.note}</p>}
+          <div className="space-y-3">
+            {group.keys.map((key) => {
+              const s = byKey.get(key);
+              if (!s) return null;
+              return (
+                <SettingField
+                  key={key}
+                  status={s}
+                  draft={edits[key]}
+                  onChange={(v) => setEdit(key, v)}
+                />
+              );
+            })}
+          </div>
+        </Card>
+      ))}
+
+      <div className="flex items-center gap-3">
+        <PrimaryButton onClick={save} disabled={busy}>
+          {busy ? 'Saving…' : 'Save changes'}
+        </PrimaryButton>
+        {notice && <span className="text-xs text-emerald-300">{notice}</span>}
+        {err && <span className="text-xs text-rose-300">{err}</span>}
+      </div>
+    </div>
+  );
+}
+
+function SettingField({
+  status,
+  draft,
+  onChange,
+}: {
+  status: SettingStatus;
+  draft: string | boolean | undefined;
+  onChange: (value: string | boolean) => void;
+}) {
+  const label = LABELS[status.key] ?? status.key;
+  const badge =
+    status.source === 'db' ? (
+      <span className="rounded-full bg-accent-muted px-2 py-0.5 text-[10px] font-medium uppercase text-accent">
+        Managed here
+      </span>
+    ) : status.source === 'env' ? (
+      <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium uppercase text-white/45">
+        From env
+      </span>
+    ) : (
+      <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase text-amber-200">
+        Not set
+      </span>
+    );
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="w-40 shrink-0">
+        <p className="text-xs font-medium text-white/80">{label}</p>
+        <p className="font-mono text-[10px] text-white/30">{status.key}</p>
+      </div>
+      <div className="flex-1">
+        {status.kind === 'bool' ? (
+          (() => {
+            const on = draft !== undefined ? Boolean(draft) : Boolean(status.value);
+            return (
+              <label className="flex items-center gap-2 text-xs text-white/60">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => onChange(e.target.checked)}
+                  className="accent-accent"
+                />
+                {on ? 'Enabled' : 'Disabled'}
+              </label>
+            );
+          })()
+        ) : status.kind === 'enum' ? (
+          <select
+            value={draft !== undefined ? String(draft) : String(status.value ?? '')}
+            onChange={(e) => onChange(e.target.value)}
+            className="rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-white focus:border-accent/40 focus:outline-none"
+          >
+            {(status.options ?? []).map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        ) : status.kind === 'secret' ? (
+          <input
+            type="password"
+            value={typeof draft === 'string' ? draft : ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={status.configured ? `configured (${status.masked})` : 'not set'}
+            autoComplete="new-password"
+            className="w-full max-w-md rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-white placeholder:text-white/30 focus:border-accent/40 focus:outline-none"
+          />
+        ) : (
+          <input
+            type="text"
+            value={typeof draft === 'string' ? draft : (String(status.value ?? '') as string)}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full max-w-md rounded-xl border border-hairline bg-surface-2 px-3 py-2 text-xs text-white placeholder:text-white/30 focus:border-accent/40 focus:outline-none"
+          />
+        )}
+      </div>
+      <div className="shrink-0">{badge}</div>
+    </div>
   );
 }
 

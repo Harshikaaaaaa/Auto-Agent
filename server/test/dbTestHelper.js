@@ -78,6 +78,7 @@ export async function loadDbModules(vi, overrides = {}) {
   const payments = await import('../db/paymentRepository.js');
   const coupons = await import('../db/couponRepository.js');
   const packages = await import('../db/creditPackageRepository.js');
+  const settings = await import('../db/settingsRepository.js');
 
   await pool.ensureDatabaseExists();
   await migrations.runMigrations();
@@ -98,6 +99,7 @@ export async function loadDbModules(vi, overrides = {}) {
     payments,
     coupons,
     packages,
+    settings,
   };
 }
 
@@ -125,6 +127,8 @@ export async function truncateAll(pool) {
   await pool.getPool().query('DELETE FROM credit_wallets');
   await pool.getPool().query('DELETE FROM users');
   await pool.getPool().query('DELETE FROM owners');
+  // Admin-managed settings overrides (migration 008); independent of owners.
+  await pool.getPool().query('DELETE FROM app_settings');
 }
 
 /** Restore the ambient environment after a suite. */

@@ -30,6 +30,7 @@ let pool;
 let wallet;
 let aiUsage;
 let rateCard;
+let settings;
 let server;
 let baseUrl;
 
@@ -66,6 +67,8 @@ beforeAll(async () => {
   wallet = m.wallet;
   aiUsage = m.aiUsage;
   rateCard = m.rateCard;
+  settings = m.settings;
+  await settings.loadSettingsCache();
 
   const { requireAdmin } = await import('../../auth/session.js');
   const { setupAdminRoutes } = await import('../routes.js');
@@ -89,7 +92,10 @@ beforeAll(async () => {
 
 afterEach(async () => {
   currentSession = { sub: ADMIN, role: 'admin' };
-  if (mysqlAvailable && pool) await truncateAll(pool);
+  if (mysqlAvailable && pool) {
+    await truncateAll(pool);
+    if (settings) await settings.loadSettingsCache();
+  }
 });
 
 afterAll(async () => {
@@ -207,5 +213,55 @@ describe.skipIf(!mysqlAvailable)('rate card immutability', () => {
     const history = await aiUsage.getUsage('req-history-1');
     expect(history.markupMultiplierX10).toBe(25);
     expect(history.creditsCharged).toBe(25000);
+  });
+});
+
+describe.skipIf(!mysqlAvailable)('runtime settings', () => {
+  it('403s a non-admin on both settings routes', async () => {
+    currentSession = { sub: USER, role: 'user' };
+    expect((await req('GET', '/api/admin/settings')).status).toBe(403);
+    expect((await req('PUT', '/api/admin/settings', { OPENAI_MODEL: 'x' })).status).toBe(403);
+  });
+
+  it('stores a value, reflects it as db-sourced, and never returns the secret', async () => {
+    const put = await req('PUT', '/api/admin/settings', {
+      RAZORPAY_KEY_ID: 'rzp_test_abc',
+      RAZORPAY_KEY_SECRET: 'super-secret-value-9999',
+    });
+    expect(put.status).toBe(200);
+    expect(put.json.updated).toEqual(
+      expect.arrayContaining(['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET']),
+    );
+
+    // The secret is stored encrypted, not echoed back.
+    expect(JSON.stringify(put.json.settings)).not.toContain('super-secret-value-9999');
+    const secret = put.json.settings.find((s) => s.key === 'RAZORPAY_KEY_SECRET');
+    expect(secret.configured).toBe(true);
+    expect(secret.source).toBe('db');
+    expect(secret.masked).toBe('••••9999');
+
+    // A non-secret text value IS returned so the field can be pre-filled.
+    const keyId = put.json.settings.find((s) => s.key === 'RAZORPAY_KEY_ID');
+    expect(keyId.value).toBe('rzp_test_abc');
+  });
+
+  it('ignores a masked echo so an untouched secret is not overwritten', async () => {
+    await req('PUT', '/api/admin/settings', { RAZORPAY_KEY_SECRET: 'real-secret-1234' });
+    // Re-save sending only the mask back (as the UI would if untouched).
+    await req('PUT', '/api/admin/settings', { RAZORPAY_KEY_SECRET: '••••1234' });
+    // The real value survives.
+    expect(await settings.getSetting('RAZORPAY_KEY_SECRET')).toBe('real-secret-1234');
+  });
+
+  it('rejects a key that is not admin-manageable', async () => {
+    const res = await req('PUT', '/api/admin/settings', { CREDENTIAL_SECRET: 'nope' });
+    expect(res.status).toBe(400);
+  });
+
+  it('clears an override when given an empty value', async () => {
+    await req('PUT', '/api/admin/settings', { OPENAI_MODEL: 'gpt-4o' });
+    expect(await settings.getSetting('OPENAI_MODEL')).toBe('gpt-4o');
+    await req('PUT', '/api/admin/settings', { OPENAI_MODEL: '' });
+    expect(await settings.getSetting('OPENAI_MODEL')).toBeNull();
   });
 });

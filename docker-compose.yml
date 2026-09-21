@@ -99,6 +99,12 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
       CREDENTIAL_SECRET: ${CREDENTIAL_SECRET:-}
+      # Razorpay payment gateway. Optional — the app boots without them and only
+      # the checkout/top-up/webhook paths need them. Listed here explicitly so
+      # they reach the container under Finch (which ignores env_file).
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - '3234:3234'

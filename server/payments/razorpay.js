@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { env } from '../config/env.js';
+import { resolveString } from '../config/settingsService.js';
 import { GatewayNotConfiguredError } from './gateway.js';
 
 /**
@@ -17,7 +17,7 @@ const GATEWAY = 'razorpay';
 const API_BASE = 'https://api.razorpay.com/v1';
 
 export function isConfigured() {
-  return Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
+  return Boolean(resolveString('RAZORPAY_KEY_ID') && resolveString('RAZORPAY_KEY_SECRET'));
 }
 
 /**
@@ -34,7 +34,9 @@ export async function createOrder(
     throw new Error('createOrder requires a positive integer amount in paise');
   }
 
-  const auth = Buffer.from(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`).toString('base64');
+  const auth = Buffer.from(
+    `${resolveString('RAZORPAY_KEY_ID')}:${resolveString('RAZORPAY_KEY_SECRET')}`,
+  ).toString('base64');
   const res = await fetchImpl(`${API_BASE}/orders`, {
     method: 'POST',
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
@@ -51,7 +53,7 @@ export async function createOrder(
     orderId: data.id,
     amountPaise: Number(data.amount),
     currency: data.currency,
-    keyId: env.RAZORPAY_KEY_ID, // public — safe for the browser
+    keyId: resolveString('RAZORPAY_KEY_ID'), // public — safe for the browser
   };
 }
 
@@ -64,13 +66,11 @@ export async function createOrder(
  * @param {string} signatureHeader the x-razorpay-signature value
  */
 export function verifyWebhookSignature(rawBody, signatureHeader) {
-  if (!env.RAZORPAY_WEBHOOK_SECRET) return false;
+  const webhookSecret = resolveString('RAZORPAY_WEBHOOK_SECRET');
+  if (!webhookSecret) return false;
   if (typeof signatureHeader !== 'string' || signatureHeader.length === 0) return false;
 
-  const expected = crypto
-    .createHmac('sha256', env.RAZORPAY_WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest('hex');
+  const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
 
   try {
     const a = Buffer.from(signatureHeader, 'hex');
@@ -89,9 +89,10 @@ export function verifyWebhookSignature(rawBody, signatureHeader) {
  * confident success state.
  */
 export function verifyPaymentSignature({ orderId, paymentId, signature } = {}) {
-  if (!env.RAZORPAY_KEY_SECRET || !orderId || !paymentId || !signature) return false;
+  const keySecret = resolveString('RAZORPAY_KEY_SECRET');
+  if (!keySecret || !orderId || !paymentId || !signature) return false;
   const expected = crypto
-    .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
+    .createHmac('sha256', keySecret)
     .update(`${orderId}|${paymentId}`)
     .digest('hex');
   try {

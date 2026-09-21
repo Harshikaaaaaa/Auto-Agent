@@ -15,7 +15,8 @@ import {
 } from './db/pool.js';
 import { importLegacyWorkflows, runMigrations } from './db/migrations.js';
 import { OPERATOR_SUBJECT } from './auth/session.js';
-import { env, publicAiConfig } from './config/env.js';
+import { env } from './config/env.js';
+import { resolvedPublicAiConfig as publicAiConfig } from './config/settingsService.js';
 import { setupAiRoutes } from './ai/routes.js';
 import { setupBillingRoutes } from './billing/routes.js';
 import { setupPaymentRoutes, setupPaymentWebhook } from './payments/routes.js';
@@ -31,6 +32,7 @@ import {
 } from './middleware/security.js';
 import { requireAdmin, requireSession, setupAuthRoutes } from './auth/session.js';
 import { bootstrapAdminIfNeeded } from './db/bootstrapAdmin.js';
+import { loadSettingsCache } from './db/settingsRepository.js';
 import {
   ADMIN_PATHS,
   AI_PATHS,
@@ -196,6 +198,11 @@ async function prepareDatabase() {
   // admin account to owner_id='operator' so its existing workflows/credentials
   // are inherited. No-op once any user exists, or when not configured.
   await bootstrapAdminIfNeeded();
+
+  // Load admin-managed runtime settings (provider keys, Razorpay, etc.) into the
+  // in-process cache so the config resolver serves DB overrides synchronously.
+  // Best-effort: on failure the resolver falls back to the environment.
+  await loadSettingsCache();
 
   // One-time move off the legacy JSON file. Uses INSERT IGNORE, so this is a
   // no-op once the rows exist, and the source file is left in place.

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import crypto from 'crypto';
-import { publicAiConfig } from '../config/env.js';
+import { resolvedPublicAiConfig as publicAiConfig } from '../config/settingsService.js';
 import { logger } from '../lib/logger.js';
 import {
   ProviderError,

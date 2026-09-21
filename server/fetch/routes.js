@@ -2,6 +2,7 @@ import http from 'http';
 import https from 'https';
 import { z } from 'zod';
 import { env } from '../config/env.js';
+import { resolveBool } from '../config/settingsService.js';
 import { logger } from '../lib/logger.js';
 import {
   BlockedRequestError,
@@ -272,7 +273,7 @@ export async function fetchWithOptionalRender(
   { url, method, headers, maxBytes, render = 'auto' },
   { renderImpl = renderFetch, resolveAddresses } = {},
 ) {
-  const renderEnabled = env.FETCH_RENDER_ENABLED;
+  const renderEnabled = resolveBool('FETCH_RENDER_ENABLED');
 
   // Render straight away when asked and allowed. HEAD requests never render:
   // there is no body to build.

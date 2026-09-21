@@ -498,6 +498,35 @@ const MIGRATIONS = [
           0, 0, 0, 0, 0, 25, 10000, 0, 8192, 1, 1, 1, 1, 1, NOW(3), NOW(3))`,
     ],
   },
+  {
+    id: '008_create_app_settings',
+    statements: [
+      // Runtime integration config an admin can manage from the console instead
+      // of a container recreate: provider API keys/models, Razorpay keys, Google
+      // OAuth client, the active AI provider, and a few feature toggles. One row
+      // per setting keyed by `setting_key`.
+      //
+      // SECRET values (API keys, client secret, webhook secret) are stored as
+      // AES-256-GCM ciphertext (see server/lib/credentialCrypto.js) in
+      // `value_enc`, exactly like tool OAuth tokens — a database dump never
+      // contains a usable key. Non-secret values (model ids, provider name,
+      // booleans) are encrypted the same way for uniformity; the column is TEXT
+      // because the encrypted envelope is several times longer than the value.
+      //
+      // These are OVERRIDES: a resolver reads the DB value if present, else falls
+      // back to the environment (server/config/env.js). So the existing .env
+      // keeps working and anything set here wins. The decryption key
+      // (CREDENTIAL_SECRET) itself stays env-only and is never stored here.
+      `CREATE TABLE IF NOT EXISTS app_settings (
+         setting_key  VARCHAR(64)  NOT NULL,
+         value_enc    TEXT         NOT NULL,
+         updated_by   VARCHAR(64)  NULL,
+         created_at   DATETIME(3)  NOT NULL,
+         updated_at   DATETIME(3)  NOT NULL,
+         PRIMARY KEY (setting_key)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
 ];
 
 /** Ensure the bookkeeping table exists before anything else. */

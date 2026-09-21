@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
+import { resolveString } from '../config/settingsService.js';
 import { logger } from '../lib/logger.js';
 import { readCredential, saveCredential, updateAccessToken } from '../db/credentialRepository.js';
 
@@ -52,7 +53,11 @@ export function isGoogleTool(toolId) {
 
 /** Whether the server is configured to run the flow at all. */
 export function isGoogleOAuthConfigured() {
-  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_OAUTH_REDIRECT_URI);
+  return Boolean(
+    resolveString('GOOGLE_CLIENT_ID') &&
+    resolveString('GOOGLE_CLIENT_SECRET') &&
+    env.GOOGLE_OAUTH_REDIRECT_URI,
+  );
 }
 
 /** An OAuth failure with an HTTP status and a reason code the UI can branch on. */
@@ -92,7 +97,7 @@ export function buildAuthorizationUrl({ toolId, codeChallenge, state }) {
     throw new OAuthError(`"${toolId}" is not a Google tool.`, { reason: 'unknown_tool' });
 
   const params = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
+    client_id: resolveString('GOOGLE_CLIENT_ID'),
     redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
     response_type: 'code',
     scope: scopes.join(' '),
@@ -181,8 +186,8 @@ export async function exchangeCodeForCredential({
 }) {
   const payload = await postToken(
     {
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
+      client_id: resolveString('GOOGLE_CLIENT_ID'),
+      client_secret: resolveString('GOOGLE_CLIENT_SECRET'),
       redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
       grant_type: 'authorization_code',
       code,
@@ -244,8 +249,8 @@ export async function getAccessToken(
 
   const payload = await postToken(
     {
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
+      client_id: resolveString('GOOGLE_CLIENT_ID'),
+      client_secret: resolveString('GOOGLE_CLIENT_SECRET'),
       grant_type: 'refresh_token',
       refresh_token: credential.refreshToken,
     },

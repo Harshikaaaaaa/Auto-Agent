@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { resolveProviderName, resolveString } from '../config/settingsService.js';
 import { emptyUsage, normalizeUsage, sumUsage, usdToMicros } from './usage.js';
 
 /** Coerce a possibly-missing numeric field to a non-negative integer. */
@@ -116,14 +117,15 @@ async function fetchWithTimeout(url, options, provider) {
 // ---------------------------------------------------------------- OpenRouter
 
 async function callOpenRouter({ prompt, model, jsonMode }) {
-  if (!env.OPENROUTER_API_KEY) {
+  const apiKey = resolveString('OPENROUTER_API_KEY');
+  if (!apiKey) {
     throw new ProviderError('OpenRouter is not configured on the server.', {
       status: 503,
       provider: 'openrouter',
     });
   }
 
-  const resolvedModel = model || env.OPENROUTER_MODEL;
+  const resolvedModel = model || resolveString('OPENROUTER_MODEL');
   const body = {
     model: resolvedModel,
     messages: [{ role: 'user', content: prompt }],
@@ -138,7 +140,7 @@ async function callOpenRouter({ prompt, model, jsonMode }) {
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -176,14 +178,15 @@ async function callOpenRouter({ prompt, model, jsonMode }) {
 // -------------------------------------------------------------------- Gemini
 
 async function callGemini({ prompt, model, jsonMode }) {
-  if (!env.GEMINI_API_KEY) {
+  const apiKey = resolveString('GEMINI_API_KEY');
+  if (!apiKey) {
     throw new ProviderError('Gemini is not configured on the server.', {
       status: 503,
       provider: 'gemini',
     });
   }
 
-  const modelId = model || env.GEMINI_MODEL;
+  const modelId = model || resolveString('GEMINI_MODEL');
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   };
@@ -195,7 +198,7 @@ async function callGemini({ prompt, model, jsonMode }) {
       method: 'POST',
       headers: {
         // Header auth, not a query param: keeps the key out of URLs and logs.
-        'x-goog-api-key': env.GEMINI_API_KEY,
+        'x-goog-api-key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -283,14 +286,15 @@ async function callOllama({ prompt, model, jsonMode }) {
 // -------------------------------------------------------------------- OpenAI
 
 async function callOpenAI({ prompt, model, jsonMode }) {
-  if (!env.OPENAI_API_KEY) {
+  const apiKey = resolveString('OPENAI_API_KEY');
+  if (!apiKey) {
     throw new ProviderError('OpenAI is not configured on the server.', {
       status: 503,
       provider: 'openai',
     });
   }
 
-  const resolvedModel = model || env.OPENAI_MODEL;
+  const resolvedModel = model || resolveString('OPENAI_MODEL');
   const body = {
     model: resolvedModel,
     messages: [{ role: 'user', content: prompt }],
@@ -302,7 +306,7 @@ async function callOpenAI({ prompt, model, jsonMode }) {
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -353,12 +357,13 @@ const PROVIDERS = {
  * requested provider is actually configured.
  */
 export function resolveProvider(requested) {
-  if (!requested || requested === 'auto') return env.AI_PROVIDER;
-  if (!env.AI_ALLOW_CLIENT_PROVIDER_OVERRIDE) return env.AI_PROVIDER;
-  if (!PROVIDERS[requested]) return env.AI_PROVIDER;
-  if (requested === 'openrouter' && !env.OPENROUTER_API_KEY) return env.AI_PROVIDER;
-  if (requested === 'gemini' && !env.GEMINI_API_KEY) return env.AI_PROVIDER;
-  if (requested === 'openai' && !env.OPENAI_API_KEY) return env.AI_PROVIDER;
+  const active = resolveProviderName();
+  if (!requested || requested === 'auto') return active;
+  if (!env.AI_ALLOW_CLIENT_PROVIDER_OVERRIDE) return active;
+  if (!PROVIDERS[requested]) return active;
+  if (requested === 'openrouter' && !resolveString('OPENROUTER_API_KEY')) return active;
+  if (requested === 'gemini' && !resolveString('GEMINI_API_KEY')) return active;
+  if (requested === 'openai' && !resolveString('OPENAI_API_KEY')) return active;
   return requested;
 }
 
@@ -366,15 +371,15 @@ export function resolveProvider(requested) {
 export function defaultModelFor(provider) {
   switch (provider) {
     case 'openrouter':
-      return env.OPENROUTER_MODEL;
+      return resolveString('OPENROUTER_MODEL');
     case 'gemini':
-      return env.GEMINI_MODEL;
+      return resolveString('GEMINI_MODEL');
     case 'ollama':
       return env.OLLAMA_MODEL;
     case 'openai':
-      return env.OPENAI_MODEL;
+      return resolveString('OPENAI_MODEL');
     default:
-      return env.OPENROUTER_MODEL;
+      return resolveString('OPENROUTER_MODEL');
   }
 }
 
@@ -435,7 +440,7 @@ export async function callProviderForJson({ prompt, provider, model }) {
  * on /api/ai/health so the problem is visible rather than silent.
  */
 export async function probeConfiguredModel() {
-  const provider = env.AI_PROVIDER;
+  const provider = resolveProviderName();
   const model = defaultModelFor(provider);
   const result = { provider, model, ok: false, detail: '' };
 
@@ -443,7 +448,7 @@ export async function probeConfiguredModel() {
     if (provider === 'openrouter') {
       const res = await fetchWithTimeout(
         `${env.OPENROUTER_BASE_URL}/models`,
-        { headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` } },
+        { headers: { Authorization: `Bearer ${resolveString('OPENROUTER_API_KEY')}` } },
         'openrouter',
       );
       if (!res.ok) throw providerHttpError('openrouter', res.status, await res.text());
@@ -456,7 +461,7 @@ export async function probeConfiguredModel() {
     } else if (provider === 'gemini') {
       const res = await fetchWithTimeout(
         `${env.GEMINI_BASE_URL}/models/${encodeURIComponent(model)}`,
-        { headers: { 'x-goog-api-key': env.GEMINI_API_KEY } },
+        { headers: { 'x-goog-api-key': resolveString('GEMINI_API_KEY') } },
         'gemini',
       );
       result.ok = res.ok;
@@ -464,7 +469,7 @@ export async function probeConfiguredModel() {
     } else if (provider === 'openai') {
       const res = await fetchWithTimeout(
         `${env.OPENAI_BASE_URL}/models/${encodeURIComponent(model)}`,
-        { headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` } },
+        { headers: { Authorization: `Bearer ${resolveString('OPENAI_API_KEY')}` } },
         'openai',
       );
       result.ok = res.ok;

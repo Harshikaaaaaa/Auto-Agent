@@ -236,20 +236,26 @@ Run MySQL yourself, then the API and the Vite dev server separately.
 
 ## Demo credentials
 
-> **Local demo only.** These exist on a fresh local database seeded for testing.
-> They are **not** production credentials. Change or delete them before any real
-> deployment.
+Two accounts are pre-seeded (they ship in [`AutoAgent.sql`](./AutoAgent.sql), or
+sign up your own):
 
 | Role  | Email                  | Password       |
 | ----- | ---------------------- | -------------- |
 | Admin | `admin@autoagent.test` | `AdminPass123` |
 | User  | `user@autoagent.test`  | `UserPass123`  |
 
-- The **admin** sees an **Admin** entry in the top-right account menu →
-  `/admin`.
-- The **user** account is on the Free plan with signup credits.
-- To recreate them on a fresh DB: sign up both via the UI, then promote the
-  admin (see [Admin console](#admin-console)).
+- **Admin** → open the account menu (top-right) and click **Admin**, or go
+  straight to **`/admin`** for the full console (users, plans, rate card,
+  settings, etc.).
+- **User** → a regular account; use the **Billing** area for wallet, plans,
+  and usage.
+
+> **Local demo only.** Passwords are stored as one-way scrypt hashes; these are
+> **not** production credentials — change or delete them before any real
+> deployment.
+>
+> On a fresh database with no `AutoAgent.sql` loaded, just sign up both accounts
+> in the UI, then make one an admin (see [Admin console](#admin-console)).
 
 ---
 

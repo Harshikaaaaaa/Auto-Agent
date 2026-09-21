@@ -239,8 +239,14 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 // --------------------------------------------------------------------- Plans
 
+async function fetchPlansAndSubscription() {
+  const [plans, balance] = await Promise.all([fetchPlans(), fetchBalance()]);
+  return { plans, subscription: balance.subscription };
+}
+
 function PlansPage() {
-  const { data, loading, error, reload } = useLoader(fetchPlans);
+  const navigate = useNavigate();
+  const { data, loading, error, reload } = useLoader(fetchPlansAndSubscription);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -255,6 +261,7 @@ function PlansPage() {
           try {
             await verifyPayment(response);
             setNotice(`Payment confirmed. ${plan.displayName} is now active.`);
+            reload();
           } catch {
             setNotice(`Payment received for ${plan.displayName}. It will activate once confirmed.`);
           }
@@ -271,7 +278,11 @@ function PlansPage() {
 
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
-  if (!data || data.length === 0) return <EmptyState>No plans are configured.</EmptyState>;
+  if (!data || data.plans.length === 0) return <EmptyState>No plans are configured.</EmptyState>;
+
+  const current = data.subscription;
+  const currentPrice = current?.pricePaise ?? 0;
+  const currentCode = current?.planCode ?? 'free';
 
   return (
     <div className="space-y-4">
@@ -280,37 +291,80 @@ function PlansPage() {
           {notice}
         </div>
       )}
+
+      {/* What a plan change actually does, stated plainly so the charge is not
+          a surprise: full price, fresh period, credits reset — no proration. */}
+      <div className="rounded-xl border border-subtle bg-surface-1 p-3 text-2xs leading-relaxed text-white/45">
+        Changing plan starts a new monthly billing period at the new plan&apos;s full price and
+        resets your monthly credit allowance. Purchased and bonus credits are kept. Unused time on
+        your current plan is not prorated. To move to Free, use{' '}
+        <button
+          type="button"
+          className="text-accent underline-offset-2 hover:underline"
+          onClick={() => navigate('/billing/subscription')}
+        >
+          Manage Subscription
+        </button>
+        .
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
-        {data.map((plan) => (
-          <Card key={plan.id}>
-            <div className="flex items-baseline justify-between">
-              <h3 className="text-lg font-semibold text-white">{plan.displayName}</h3>
-              <span className="text-sm font-medium text-white/70">
-                {plan.pricePaise > 0 ? `${formatRupees(plan.pricePaise)}/mo` : 'Free'}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-accent">
-              {formatCredits(plan.includedCredits)} credits / month
-            </p>
-            {Array.isArray(plan.features) && (
-              <ul className="mt-3 space-y-1 text-xs text-white/55">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex gap-2">
-                    <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-accent/60" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {plan.pricePaise > 0 && (
-              <div className="mt-4">
-                <PrimaryButton onClick={() => subscribe(plan)} disabled={busy === plan.id}>
-                  {busy === plan.id ? 'Starting…' : 'Choose plan'}
-                </PrimaryButton>
+        {data.plans.map((plan) => {
+          const isCurrent = plan.code === currentCode;
+          const isFree = plan.pricePaise <= 0;
+          const isUpgrade = plan.pricePaise > currentPrice;
+          const label = isCurrent
+            ? 'Current plan'
+            : isFree
+              ? 'Included'
+              : isUpgrade
+                ? 'Upgrade'
+                : 'Downgrade';
+
+          return (
+            <Card key={plan.id} className={isCurrent ? 'ring-1 ring-inset ring-accent/40' : ''}>
+              <div className="flex items-baseline justify-between">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold text-white">{plan.displayName}</h3>
+                  {isCurrent && (
+                    <span className="rounded-full bg-accent-muted px-2 py-0.5 text-[10px] font-medium uppercase text-accent">
+                      Current
+                    </span>
+                  )}
+                </div>
+                <span className="text-sm font-medium text-white/70">
+                  {plan.pricePaise > 0 ? `${formatRupees(plan.pricePaise)}/mo` : 'Free'}
+                </span>
               </div>
-            )}
-          </Card>
-        ))}
+              <p className="mt-1 text-xs text-accent">
+                {formatCredits(plan.includedCredits)} credits / month
+              </p>
+              {Array.isArray(plan.features) && (
+                <ul className="mt-3 space-y-1 text-xs text-white/55">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex gap-2">
+                      <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-accent/60" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-4">
+                {isCurrent ? (
+                  <GhostButton disabled>Current plan</GhostButton>
+                ) : isFree ? (
+                  <span className="text-2xs text-white/35">
+                    Default plan — downgrade via Manage Subscription.
+                  </span>
+                ) : (
+                  <PrimaryButton onClick={() => subscribe(plan)} disabled={busy === plan.id}>
+                    {busy === plan.id ? 'Starting…' : `${label} · ${formatRupees(plan.pricePaise)}`}
+                  </PrimaryButton>
+                )}
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

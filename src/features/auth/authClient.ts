@@ -11,6 +11,8 @@ import { apiUrl } from '@config/api';
 export interface SessionState {
   authenticated: boolean;
   userId: string | null;
+  email: string | null;
+  role: 'user' | 'admin' | null;
   /** True when the server runs with AUTH_ENABLED=false (local development). */
   authDisabled: boolean;
 }
@@ -18,6 +20,8 @@ export interface SessionState {
 export const SIGNED_OUT: SessionState = {
   authenticated: false,
   userId: null,
+  email: null,
+  role: null,
   authDisabled: false,
 };
 
@@ -52,30 +56,40 @@ export async function fetchSession(): Promise<SessionState> {
     );
   }
 
-  const body = (await response.json()) as {
-    authenticated?: boolean;
-    user?: { id?: string };
-    authDisabled?: boolean;
-  };
+  return mapSession((await response.json()) as RawSession);
+}
 
+interface RawSession {
+  authenticated?: boolean;
+  user?: { id?: string; email?: string; role?: string };
+  authDisabled?: boolean;
+}
+
+function mapSession(body: RawSession): SessionState {
+  const role = body.user?.role;
   return {
     authenticated: Boolean(body.authenticated),
     userId: body.user?.id ?? null,
+    email: body.user?.email ?? null,
+    role: role === 'admin' ? 'admin' : role === 'user' ? 'user' : null,
     authDisabled: Boolean(body.authDisabled),
   };
 }
 
-/** Exchange the operator password for a session cookie. */
-export async function login(password: string): Promise<SessionState> {
+/** Sign in with email + password, receiving a session cookie. */
+export async function login(email: string, password: string): Promise<SessionState> {
   const response = await fetch(apiUrl('/api/auth/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ email, password }),
   });
 
   if (response.status === 401) {
-    throw new AuthError('Incorrect password.', 401, 'invalid_credentials');
+    throw new AuthError('Incorrect email or password.', 401, 'invalid_credentials');
+  }
+  if (response.status === 403) {
+    throw new AuthError('This account is not active.', 403, 'account_disabled');
   }
   if (response.status === 429) {
     throw new AuthError('Too many attempts. Wait a moment and try again.', 429, 'rate_limited');
@@ -84,17 +98,33 @@ export async function login(password: string): Promise<SessionState> {
     throw new AuthError(`Sign in failed (${response.status}).`, response.status, 'login_failed');
   }
 
-  const body = (await response.json()) as {
-    authenticated?: boolean;
-    user?: { id?: string };
-    authDisabled?: boolean;
-  };
+  return mapSession(await response.json());
+}
 
-  return {
-    authenticated: Boolean(body.authenticated),
-    userId: body.user?.id ?? null,
-    authDisabled: Boolean(body.authDisabled),
-  };
+/** Create an account and receive a session cookie. */
+export async function signup(email: string, password: string): Promise<SessionState> {
+  const response = await fetch(apiUrl('/api/auth/signup'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (response.status === 409) {
+    throw new AuthError('An account with that email already exists.', 409, 'email_taken');
+  }
+  if (response.status === 400) {
+    const body = (await response.json().catch(() => ({}))) as { message?: string };
+    throw new AuthError(body.message ?? 'Check your email and password.', 400, 'invalid_request');
+  }
+  if (response.status === 429) {
+    throw new AuthError('Too many attempts. Wait a moment and try again.', 429, 'rate_limited');
+  }
+  if (!response.ok) {
+    throw new AuthError(`Sign up failed (${response.status}).`, response.status, 'signup_failed');
+  }
+
+  return mapSession(await response.json());
 }
 
 /** Clear the session cookie. */

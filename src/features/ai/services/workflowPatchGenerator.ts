@@ -86,6 +86,11 @@ export interface GraphPatch {
   /** A question to put back to the user when the instruction was ambiguous. */
   clarification: string | null;
   operations: GraphOperation[];
+  /**
+   * Credits the server charged for generating this patch, when billing is on.
+   * Surfaced in the chat as "used N credits". Undefined when unbilled.
+   */
+  creditsCharged?: number;
 }
 
 /**
@@ -529,7 +534,7 @@ export async function generateGraphPatch(
   let issues: string[] = ['the model returned no usable operations'];
 
   for (let attempt = 1; attempt <= MAX_PATCH_ATTEMPTS; attempt += 1) {
-    const { patch: raw } = await requestPatch({
+    const { patch: raw, meta } = await requestPatch({
       message,
       graph: described,
       catalog,
@@ -544,7 +549,9 @@ export async function generateGraphPatch(
     const parsed = rawPatchSchema.safeParse(unwrapPatch(raw));
     if (parsed.success) {
       const result = validatePatch(parsed.data, graph.nodes, catalog);
-      if (result.issues.length === 0) return result.patch;
+      if (result.issues.length === 0) {
+        return { ...result.patch, creditsCharged: meta?.creditsCharged };
+      }
       issues = result.issues;
     } else {
       issues = parsed.error.issues.map(

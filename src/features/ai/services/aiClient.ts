@@ -23,6 +23,8 @@ export interface AiCallMeta {
   provider: string;
   model: string;
   attempts: number;
+  /** Credits the server charged for this call, when billing is on. */
+  creditsCharged?: number;
 }
 
 /** An error raised by the AI backend, carrying enough context to act on. */

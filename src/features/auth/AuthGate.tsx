@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AuthError, fetchSession, login, SIGNED_OUT, type SessionState } from './authClient';
+import {
+  AuthError,
+  fetchSession,
+  login,
+  signup,
+  SIGNED_OUT,
+  type SessionState,
+} from './authClient';
 
 /**
  * Gates the app behind a session.
@@ -7,11 +14,13 @@ import { AuthError, fetchSession, login, SIGNED_OUT, type SessionState } from '.
  * Every API route except /healthz and the auth endpoints requires a session, so
  * without this the app would render and then fail every request with a 401.
  *
- * This is deliberately minimal: one shared operator password, matching the
- * server's single-operator model. Task 13 adds Google sign-in alongside it.
+ * Accounts are email + password (Phase 1 of the SaaS work). A visitor can sign
+ * in or create an account here; a new account is provisioned with free credits
+ * and the Free plan server-side.
  */
 
 type Status = 'checking' | 'signed-out' | 'signed-in' | 'unreachable';
+type Mode = 'login' | 'signup';
 
 interface AuthGateProps {
   children: React.ReactNode;
@@ -20,6 +29,8 @@ interface AuthGateProps {
 export function AuthGate({ children }: AuthGateProps) {
   const [status, setStatus] = useState<Status>('checking');
   const [session, setSession] = useState<SessionState>(SIGNED_OUT);
+  const [mode, setMode] = useState<Mode>('login');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -48,7 +59,8 @@ export function AuthGate({ children }: AuthGateProps) {
       setError(null);
       setSubmitting(true);
       try {
-        const next = await login(password);
+        const next =
+          mode === 'signup' ? await signup(email, password) : await login(email, password);
         setSession(next);
         setStatus('signed-in');
         // Do not keep the password in component state after use.
@@ -59,7 +71,7 @@ export function AuthGate({ children }: AuthGateProps) {
         setSubmitting(false);
       }
     },
-    [password],
+    [mode, email, password],
   );
 
   if (status === 'checking') {
@@ -86,26 +98,43 @@ export function AuthGate({ children }: AuthGateProps) {
   }
 
   if (status === 'signed-out') {
+    const isSignup = mode === 'signup';
+    const canSubmit = email.length > 0 && password.length >= (isSignup ? 8 : 1);
     return (
       <Centered>
-        <h1 style={heading}>Sign in</h1>
+        <h1 style={heading}>{isSignup ? 'Create your account' : 'Sign in'}</h1>
         <p style={body}>
-          AutoAgent can send email, post messages, and change saved data, so it requires a sign in.
+          {isSignup
+            ? 'New accounts start on the Free plan with signup credits included.'
+            : 'AutoAgent can send email, post messages, and change saved data, so it requires a sign in.'}
         </p>
         <form onSubmit={handleSubmit} style={{ marginTop: 18 }}>
-          <label htmlFor="autoagent-password" style={label}>
-            Operator password
+          <label htmlFor="autoagent-email" style={label}>
+            Email
+          </label>
+          <input
+            id="autoagent-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            style={input}
+            autoFocus
+          />
+          <label htmlFor="autoagent-password" style={{ ...label, marginTop: 14 }}>
+            Password
           </label>
           <input
             id="autoagent-password"
             type="password"
-            autoComplete="current-password"
+            autoComplete={isSignup ? 'new-password' : 'current-password'}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             style={input}
-            // Autofocus is appropriate here: this is the only control on screen.
-            autoFocus
           />
+          {isSignup && (
+            <p style={{ ...body, fontSize: 11, marginTop: 6 }}>At least 8 characters.</p>
+          )}
           {error && (
             <p role="alert" style={{ ...body, color: '#fca5a5', marginTop: 10 }}>
               {error}
@@ -113,16 +142,33 @@ export function AuthGate({ children }: AuthGateProps) {
           )}
           <button
             type="submit"
-            disabled={submitting || password.length === 0}
+            disabled={submitting || !canSubmit}
             style={{
               ...primaryButton,
               marginTop: 16,
-              opacity: submitting || password.length === 0 ? 0.5 : 1,
+              width: '100%',
+              opacity: submitting || !canSubmit ? 0.5 : 1,
             }}
           >
-            {submitting ? 'Signing in…' : 'Sign in'}
+            {submitting
+              ? isSignup
+                ? 'Creating account…'
+                : 'Signing in…'
+              : isSignup
+                ? 'Create account'
+                : 'Sign in'}
           </button>
         </form>
+        <button
+          type="button"
+          onClick={() => {
+            setMode(isSignup ? 'login' : 'signup');
+            setError(null);
+          }}
+          style={linkButton}
+        >
+          {isSignup ? 'Already have an account? Sign in' : 'New here? Create an account'}
+        </button>
       </Centered>
     );
   }
@@ -210,6 +256,16 @@ const code: React.CSSProperties = {
   borderRadius: 6,
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 12,
+};
+
+const linkButton: React.CSSProperties = {
+  marginTop: 16,
+  background: 'none',
+  border: 'none',
+  color: '#5eead4',
+  fontSize: 12,
+  cursor: 'pointer',
+  padding: 0,
 };
 
 const devBanner: React.CSSProperties = {

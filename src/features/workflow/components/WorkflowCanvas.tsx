@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, lazy, Suspense } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ReactFlow, {
   Background,
   Controls,
@@ -603,6 +604,7 @@ export function WorkflowCanvas() {
     Record<string, 'pending' | 'generating' | 'done' | 'error'>
   >({});
   const { fitView } = useReactFlow();
+  const navigate = useNavigate();
 
   const effectiveModel = useMemo(() => {
     if (!selectedModel || selectedModel === 'auto') {
@@ -1223,6 +1225,15 @@ export function WorkflowCanvas() {
       }
 
       applyGraphPatch(patch);
+      if (typeof patch.creditsCharged === 'number' && patch.creditsCharged > 0) {
+        updateActiveTaskMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: `Used ${patch.creditsCharged?.toLocaleString('en-IN')} credits.`,
+          },
+        ]);
+      }
     } catch (error) {
       console.error('Workflow chat edit failed:', error);
       const detail =
@@ -2316,14 +2327,18 @@ export function WorkflowCanvas() {
                         <option value="auto" className="bg-[#111] text-white">
                           Auto best fit
                         </option>
+                        {/* The trailing tier is a relative credit-usage hint so
+                            a user can weigh cost before generating — Ollama is
+                            local/free, Gemini is low, the OpenRouter model here
+                            is a mid-tier choice. */}
                         <option value={AI_CONFIG.openRouterModel} className="bg-[#111] text-white">
-                          OpenRouter: {AI_CONFIG.openRouterModel}
+                          OpenRouter: {AI_CONFIG.openRouterModel} — medium credit usage
                         </option>
                         <option value={AI_CONFIG.geminiModel} className="bg-[#111] text-white">
-                          Gemini: {AI_CONFIG.geminiModel}
+                          Gemini: {AI_CONFIG.geminiModel} — low credit usage
                         </option>
                         <option value={AI_CONFIG.ollamaModel} className="bg-[#111] text-white">
-                          Ollama: {AI_CONFIG.ollamaModel}
+                          Ollama: {AI_CONFIG.ollamaModel} — free (local)
                         </option>
                       </select>
                     </div>
@@ -2732,6 +2747,13 @@ export function WorkflowCanvas() {
                 className="rounded-xl px-3 py-2 text-2xs font-bold uppercase text-white/45 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
               >
                 Clear
+              </button>
+              <button
+                onClick={() => navigate('/billing')}
+                title="Billing & usage"
+                className="rounded-xl px-3 py-2 text-2xs font-bold uppercase text-white/55 transition duration-fast ease-smooth hover:bg-white/5 hover:text-white"
+              >
+                Billing
               </button>
               {/* View navigation — moved here from the left sidebar so all
                   navigation and actions live in the top toolbar. A segmented
